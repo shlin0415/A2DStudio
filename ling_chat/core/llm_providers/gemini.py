@@ -1,6 +1,6 @@
 import json
 import os
-from typing import AsyncGenerator, Dict, List, Optional
+from typing import AsyncGenerator, Dict, List, Optional, Union
 
 import httpx
 
@@ -62,6 +62,53 @@ class GeminiProvider(BaseLLMProvider):
                 system_instruction = str(content)
                 continue
 
+            # 处理 tool 消息（function response）
+            if role == "tool":
+                # Gemini 使用 functionResponse 格式
+                tool_call_id = msg.get("tool_call_id", "")
+                tool_content = msg.get("content", "")
+                # 从消息中获取 function name（OpenAI 格式的 tool 消息可能包含 name）
+                func_name = msg.get("name") or msg.get("function_name", "")
+                contents.append(
+                    {
+                        "role": "user",
+                        "parts": [
+                            {
+                                "functionResponse": {
+                                    "name": func_name,
+                                    "response": {"result": tool_content},
+                                    "id": tool_call_id,
+                                }
+                            }
+                        ],
+                    }
+                )
+                continue
+
+            # 处理 assistant 消息中的 tool_calls
+            if role == "assistant" and msg.get("tool_calls"):
+                parts = []
+                # 如果有文本内容
+                if content:
+                    parts.append({"text": str(content)})
+                # 添加 tool_calls
+                for tc in msg.get("tool_calls", []):
+                    func = tc.get("function", {})
+                    args = func.get("arguments", {})
+                    if isinstance(args, str):
+                        args = json.loads(args) if args else {}
+                    parts.append(
+                        {
+                            "functionCall": {
+                                "name": func.get("name", ""),
+                                "args": args,
+                                "id": tc.get("id", ""),
+                            }
+                        }
+                    )
+                contents.append({"role": "model", "parts": parts})
+                continue
+
             # 转换角色名称: user -> user, assistant/model -> model
             if role == "human":
                 role = "user"
@@ -73,7 +120,60 @@ class GeminiProvider(BaseLLMProvider):
 
         return system_instruction, contents
 
-    def _build_request_body(self, messages: List[Dict], stream: bool = False) -> Dict:
+    def _convert_openai_tools_to_gemini(self, tools: List[Dict]) -> List[Dict]:
+        """
+        将 OpenAI 格式的 tools 转换为 Gemini 原生格式
+
+        OpenAI 格式：
+        [{"type": "function", "function": {"name", "description", "parameters"}}]
+
+        Gemini 格式：
+        [{"functionDeclarations": [{"name", "description", "parameters"}]}]
+        """
+        function_declarations = []
+        for tool in tools:
+            if tool.get("type") == "function":
+                func = tool.get("function", {})
+                declaration = {
+                    "name": func.get("name", ""),
+                    "description": func.get("description", ""),
+                    "parameters": func.get("parameters", {}),
+                }
+                function_declarations.append(declaration)
+
+        return (
+            [{"functionDeclarations": function_declarations}]
+            if function_declarations
+            else []
+        )
+
+    def _parse_function_calls(self, parts: List[Dict]) -> List[Dict]:
+        """
+        解析 Gemini functionCall 响应
+
+        Gemini 格式：parts 中包含 functionCall 对象
+        functionCall: {name, id, args}
+        注意：args 已经是对象，无需解析
+        """
+        tool_calls = []
+        for part in parts:
+            if "functionCall" in part:
+                fc = part["functionCall"]
+                tool_calls.append(
+                    {
+                        "id": fc.get("id", ""),
+                        "name": fc.get("name", ""),
+                        "arguments": fc.get("args", {}),  # args 已是对象
+                    }
+                )
+        return tool_calls
+
+    def _build_request_body(
+        self,
+        messages: List[Dict],
+        stream: bool = False,
+        tools: Optional[List[Dict]] = None,
+    ) -> Dict:
         """构建Gemini API请求体"""
         system_instruction, contents = self._convert_messages_to_contents(messages)
 
@@ -89,14 +189,25 @@ class GeminiProvider(BaseLLMProvider):
         if system_instruction:
             body["systemInstruction"] = {"parts": [{"text": system_instruction}]}
 
+        # 添加 tools（Gemini 原生格式）
+        if tools:
+            gemini_tools = self._convert_openai_tools_to_gemini(tools)
+            if gemini_tools:
+                body["tools"] = gemini_tools
+
         return body
 
-    def generate_response(self, messages: List[Dict]) -> str:
+    def generate_response(
+        self,
+        messages: List[Dict],
+        tools: Optional[List[Dict]] = None,
+        tool_choice: str = "auto",
+    ) -> Union[str, Dict]:
         """生成Gemini模型响应（非流式）"""
         try:
             logger.debug(f"向Gemini API发送请求: {self.model_type}")
 
-            body = self._build_request_body(messages, stream=False)
+            body = self._build_request_body(messages, stream=False, tools=tools)
             url = f"{self.base_url}/models/{self.model_type}:generateContent?key={self.api_key}"
 
             with self._get_http_client() as client:
@@ -115,17 +226,31 @@ class GeminiProvider(BaseLLMProvider):
                 candidates = response_json.get("candidates", [])
                 if not candidates:
                     logger.warning("Gemini API返回空candidates")
+                    if tools:
+                        return {"content": "", "tool_calls": []}
                     return ""
 
                 content = candidates[0].get("content", {})
                 parts = content.get("parts", [])
 
-                # 拼接所有文本部分
+                # 检查是否有 functionCall
+                if tools:
+                    tool_calls = self._parse_function_calls(parts)
+                    # 拼接文本内容
+                    result_text = ""
+                    for part in parts:
+                        if "text" in part:
+                            result_text += part["text"]
+                    return {
+                        "content": result_text,
+                        "tool_calls": tool_calls,
+                    }
+
+                # 没有 tools，返回纯文本
                 result_text = ""
                 for part in parts:
                     if "text" in part:
                         result_text += part["text"]
-
                 return result_text
 
         except Exception as e:

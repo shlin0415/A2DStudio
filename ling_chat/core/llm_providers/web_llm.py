@@ -1,5 +1,11 @@
+<<<<<<< HEAD
 import os
 from typing import AsyncGenerator, Dict, List
+=======
+import json
+import os
+from typing import AsyncGenerator, Dict, List, Optional, Union
+>>>>>>> c8a234ea (feat:工具基础支持)
 
 import httpx
 from openai import AsyncOpenAI, OpenAI
@@ -52,8 +58,58 @@ class WebLLMProvider(BaseLLMProvider):
     def initialize_client(self):
         return super().initialize_client()
 
-    def generate_response(self, messages: List[Dict]) -> str:
-        """生成模型响应"""
+    def _parse_response(
+        self, response, tools: Optional[List[Dict]] = None
+    ) -> Union[str, Dict]:
+        """
+        解析响应结果
+
+        Args:
+            response: API 响应对象
+            tools: 是否使用了 tools
+
+        Returns:
+            如果没有 tools，返回 str
+            如果有 tools，返回 dict，包含 content 和 tool_calls
+        """
+        if tools:
+            processed_response = {
+                "content": response.choices[0].message.content,
+                "tool_calls": [],
+            }
+
+            if response.choices[0].message.tool_calls:
+                for tool_call in response.choices[0].message.tool_calls:
+                    processed_response["tool_calls"].append(
+                        {
+                            "id": tool_call.id,
+                            "name": tool_call.function.name,
+                            "arguments": json.loads(tool_call.function.arguments),
+                        }
+                    )
+
+            return processed_response
+        else:
+            return response.choices[0].message.content
+
+    def generate_response(
+        self,
+        messages: List[Dict],
+        tools: Optional[List[Dict]] = None,
+        tool_choice: str = "auto",
+    ) -> Union[str, Dict]:
+        """生成模型响应
+
+        Args:
+            messages: 消息列表
+            tools: 可选的工具列表，格式为 OpenAI tools 格式
+                   如果已存在 tools 参数则忽略（不覆盖）
+            tool_choice: 工具选择策略，默认 "auto"
+
+        Returns:
+            如果没有 tools，返回 str
+            如果有 tools，返回 dict，包含 content 和 tool_calls
+        """
         if self.client is None:
             error_message = "通用网络大模型未初始化，请检查配置"
             logger.error(error_message)
@@ -71,8 +127,13 @@ class WebLLMProvider(BaseLLMProvider):
             }
             self._add_thinking_extra_body(create_kwargs)
 
+            # 添加 tools 支持（如果已有则忽略）
+            if tools:
+                create_kwargs["tools"] = tools
+                create_kwargs["tool_choice"] = tool_choice
+
             response = self.client.chat.completions.create(**create_kwargs)
-            return response.choices[0].message.content
+            return self._parse_response(response, tools)
 
         except Exception as e:
             logger.error(f"通用网络大模型请求失败: {str(e)}")

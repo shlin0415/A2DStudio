@@ -1,6 +1,10 @@
 import json
 import os
+<<<<<<< HEAD
 from typing import Any, AsyncGenerator, Dict, List, Optional
+=======
+from typing import Any, AsyncGenerator, Dict, List, Optional, Union
+>>>>>>> c8a234ea (feat:工具基础支持)
 
 import httpx
 
@@ -9,15 +13,25 @@ from ling_chat.core.logger import logger
 from .base import BaseLLMProvider
 
 
+<<<<<<< HEAD
 # LM Studio API 文档：https://lmstudio.ai/docs/developer/rest/chat
 # POST /api/v1/chat
+=======
+# LM Studio API 文档：
+# - 专有端点：https://lmstudio.ai/docs/developer/rest/chat (/api/v1/chat)
+# - 兼容端点：https://lmstudio.ai/docs/developer/openai-compat/tools (/v1/chat/completions)
+>>>>>>> c8a234ea (feat:工具基础支持)
 class LMStudioProvider(BaseLLMProvider):
     def __init__(self):
         super().__init__()
         self.model_type = os.environ.get("LMSTUDIO_MODEL_TYPE", "")
         base_url = os.environ.get("LMSTUDIO_BASE_URL", "http://localhost:1234")
-        self.base_url = base_url.replace("/v1", "")
+        # 确保 base_url 不包含后缀
+        self.base_url = base_url.rstrip("/").replace("/v1", "").replace("/api", "")
         self.api_token = os.environ.get("LMSTUDIO_API_TOKEN", "")
+        # 专有端点的 temperature 范围 [0, 1]
+        self.temperature = float(os.environ.get("TEMPERATURE", 1.3))
+        self.top_p = float(os.environ.get("TOP_P", 0.9))
 
     def initialize_client(self):
         """LM Studio 客户端在每次请求时创建，无需初始化"""
@@ -98,11 +112,18 @@ class LMStudioProvider(BaseLLMProvider):
                 result.append({"type": "image", "data_url": url})
         return result
 
+<<<<<<< HEAD
     def _create_request_body(
         self, messages: List[Dict], stream: bool = False, **kwargs
+=======
+    def _create_native_request_body(
+        self,
+        messages: List[Dict],
+        stream: bool = False,
+>>>>>>> c8a234ea (feat:工具基础支持)
     ) -> Dict[str, Any]:
         """
-        构建 LM Studio /api/v1/chat 请求体
+        构建 LM Studio /api/v1/chat 专有端点请求体
 
         参考 API 文档参数:
         - model: 必需
@@ -111,13 +132,6 @@ class LMStudioProvider(BaseLLMProvider):
         - stream: 可选，默认 false
         - temperature: 可选 [0,1]
         - top_p: 可选 [0,1]
-        - top_k: 可选
-        - min_p: 可选 [0,1]
-        - repeat_penalty: 可选
-        - max_output_tokens: 可选
-        - reasoning: 可选 "off"|"low"|"medium"|"high"|"on"
-        - context_length: 可选
-        - store: 可选，默认 true
         """
         # 自动提取system消息并过滤messages
         system_prompt = None
@@ -129,7 +143,11 @@ class LMStudioProvider(BaseLLMProvider):
             else:
                 filtered_messages.append(msg)
 
+<<<<<<< HEAD
         body = {
+=======
+        body: Dict[str, Any] = {
+>>>>>>> c8a234ea (feat:工具基础支持)
             "model": self.model_type,
             "input": self._build_input_messages(filtered_messages),
             "stream": stream,
@@ -138,6 +156,7 @@ class LMStudioProvider(BaseLLMProvider):
         if system_prompt:
             body["system_prompt"] = system_prompt
 
+<<<<<<< HEAD
         temperature = os.environ.get("TEMPERATURE", "1.3")
         if temperature:
             temp_value = float(temperature)
@@ -148,12 +167,20 @@ class LMStudioProvider(BaseLLMProvider):
                     f"LM Studio temperature 超出范围({temperature})，已重置为1.0"
                 )
             body["temperature"] = temp_value
+=======
+        # temperature 范围限制 [0, 1]
+        temp_value = self.temperature
+        if temp_value > 1.0:
+            temp_value = 1.0
+            logger.debug(
+                f"LM Studio temperature 超出范围({self.temperature})，已重置为1.0"
+            )
+        body["temperature"] = temp_value
+>>>>>>> c8a234ea (feat:工具基础支持)
 
-        top_p = os.environ.get("TOP_P", "0.9")
-        if top_p:
-            body["top_p"] = float(top_p)
+        body["top_p"] = self.top_p
 
-        # 以下参数未使用
+        # 可选参数
         max_tokens = os.environ.get("MAX_TOKENS")
         if max_tokens:
             body["max_output_tokens"] = int(max_tokens)
@@ -180,11 +207,169 @@ class LMStudioProvider(BaseLLMProvider):
 
         return body
 
+<<<<<<< HEAD
+    async def _handle_stream_response(
+        self, response: httpx.Response
+    ) -> AsyncGenerator[str, None]:
+=======
+    def _parse_tool_calls(self, tool_calls_raw: List[Dict]) -> List[Dict]:
+>>>>>>> c8a234ea (feat:工具基础支持)
+        """
+        解析 LM Studio 工具调用（OpenAI 兼容格式）
+
+        LM Studio /v1/chat/completions 的 tool_calls 格式与 OpenAI 一致：
+        {id, type, function: {name, arguments: string}}
+        注意：arguments 是 JSON 字符串，需要解析
+        """
+        parsed = []
+        for tc in tool_calls_raw:
+            func = tc.get("function", {})
+            args = func.get("arguments", "{}")
+            if isinstance(args, str):
+                try:
+                    args = json.loads(args)
+                except json.JSONDecodeError:
+                    logger.warning(f"无法解析 tool_call arguments: {args}")
+                    args = {}
+            parsed.append(
+                {
+                    "id": tc.get("id", ""),
+                    "name": func.get("name", ""),
+                    "arguments": args,
+                }
+            )
+        return parsed
+
+    def _generate_with_tools(
+        self,
+        messages: List[Dict],
+        tools: List[Dict],
+        tool_choice: str = "auto",
+    ) -> Union[str, Dict]:
+        """
+        使用 OpenAI 兼容端点 /v1/chat/completions 生成带 tools 的响应
+        """
+        try:
+            logger.debug("正在向 LM Studio /v1/chat/completions 发送请求（带 tools）")
+
+            body: Dict[str, Any] = {
+                "model": self.model_type,
+                "messages": messages,
+                "temperature": min(self.temperature, 1.0),
+                "top_p": self.top_p,
+                "stream": False,
+                "tools": tools,
+            }
+
+            # LM Studio 支持 tool_choice: "auto", "none", "required"
+            if tool_choice in ("auto", "none", "required"):
+                body["tool_choice"] = tool_choice
+
+            with self._get_http_client() as client:
+                response = client.post("/v1/chat/completions", json=body)
+
+                response.raise_for_status()
+                data = response.json()
+
+                choices = data.get("choices", [])
+                if not choices:
+                    logger.warning("LM Studio 返回空 choices")
+                    return {"content": "", "tool_calls": []}
+
+                message = choices[0].get("message", {})
+                content = message.get("content", "") or ""
+                tool_calls_raw = message.get("tool_calls", [])
+
+                if tool_calls_raw:
+                    return {
+                        "content": content,
+                        "tool_calls": self._parse_tool_calls(tool_calls_raw),
+                    }
+                return {"content": content, "tool_calls": []}
+
+        except httpx.HTTPStatusError as e:
+            logger.error(
+                f"LM Studio HTTP 错误：{e.response.status_code} - {e.response.text}"
+            )
+            raise
+        except httpx.RequestError as e:
+            logger.error(f"LM Studio 请求错误：{str(e)}")
+            raise
+        except Exception as e:
+            logger.error(f"LM Studio API 请求失败：{str(e)}")
+            raise
+
+    def _generate_native(
+        self,
+        messages: List[Dict],
+    ) -> str:
+        """
+        使用 LM Studio 专有端点 /api/v1/chat 生成响应（无 tools）
+        """
+        try:
+            logger.debug("正在向 LM Studio /api/v1/chat 发送请求（专有端点）")
+
+            request_body = self._create_native_request_body(messages, stream=False)
+
+            with self._get_http_client() as client:
+                response = client.post("/api/v1/chat", json=request_body)
+
+                response.raise_for_status()
+                data = response.json()
+
+                # 解析专有端点响应
+                output = data.get("output", [])
+                content_parts = []
+
+                for item in output:
+                    item_type = item.get("type")
+                    if item_type == "message":
+                        content_parts.append(item.get("content", ""))
+                    elif item_type == "reasoning":
+                        content_parts.append(item.get("content", ""))
+                    elif item_type == "tool_call":
+                        tool_output = item.get("output", "")
+                        if tool_output:
+                            content_parts.append(
+                                f"[工具：{item.get('tool')}] {tool_output}"
+                            )
+
+                return "".join(content_parts)
+
+        except httpx.HTTPStatusError as e:
+            logger.error(
+                f"LM Studio HTTP 错误：{e.response.status_code} - {e.response.text}"
+            )
+            raise
+        except httpx.RequestError as e:
+            logger.error(f"LM Studio 请求错误：{str(e)}")
+            raise
+        except Exception as e:
+            logger.error(f"LM Studio API 请求失败：{str(e)}")
+            raise
+
+    def generate_response(
+        self,
+        messages: List[Dict],
+        tools: Optional[List[Dict]] = None,
+        tool_choice: str = "auto",
+    ) -> Union[str, Dict]:
+        """生成 LM Studio 模型响应
+
+        策略：
+        - 无 tools 时：使用专有端点 /api/v1/chat
+        - 有 tools 时：使用兼容端点 /v1/chat/completions
+        """
+        if tools:
+            return self._generate_with_tools(messages, tools, tool_choice)
+        else:
+            return self._generate_native(messages)
+
     async def _handle_stream_response(
         self, response: httpx.Response
     ) -> AsyncGenerator[str, None]:
         """
-        处理 SSE 流式响应
+        处理 SSE 流式响应（专有端点格式）
 
         LM Studio SSE 事件格式:
         event: <event_type>
@@ -202,7 +387,6 @@ class LMStudioProvider(BaseLLMProvider):
         async for line in response.aiter_lines():
             line = line.strip()
             if not line:
-                # 空行表示事件块结束，处理已解析的事件
                 if current_event is not None and current_data is not None:
                     async for chunk in self._process_sse_event(
                         current_event, current_data
@@ -212,7 +396,6 @@ class LMStudioProvider(BaseLLMProvider):
                     current_data = None
                 continue
 
-            # 解析 SSE 格式
             if line.startswith("event:"):
                 current_event = line.split(":", 1)[1].strip()
             elif line.startswith("data:"):
@@ -222,9 +405,7 @@ class LMStudioProvider(BaseLLMProvider):
                 except json.JSONDecodeError:
                     logger.warning(f"无法解析 SSE 数据：{data_str}")
                     current_data = None
-            # 忽略其他行
 
-        # 处理最后一个事件
         if current_event is not None and current_data is not None:
             async for chunk in self._process_sse_event(current_event, current_data):
                 yield chunk
@@ -232,6 +413,7 @@ class LMStudioProvider(BaseLLMProvider):
     async def _process_sse_event(
         self, event_type: str, data: Dict[str, Any]
     ) -> AsyncGenerator[str, None]:
+<<<<<<< HEAD
         """
         处理单个 SSE 事件
 
@@ -239,6 +421,9 @@ class LMStudioProvider(BaseLLMProvider):
             event_type: 事件类型（message.delta, message.end, chat.end, error 等）
             data: 事件数据字典
         """
+=======
+        """处理单个 SSE 事件"""
+>>>>>>> c8a234ea (feat:工具基础支持)
         if event_type == "message.delta":
             content = data.get("content", "")
             if content:
@@ -255,6 +440,7 @@ class LMStudioProvider(BaseLLMProvider):
             stats = result.get("stats", {})
             logger.debug(f"聊天完成。统计信息：{stats}")
 
+<<<<<<< HEAD
     def generate_response(self, messages: List[Dict]) -> str:
         """生成 LM Studio 模型响应（非流式）
 
@@ -319,10 +505,16 @@ class LMStudioProvider(BaseLLMProvider):
         self, messages: List[Dict]
     ) -> AsyncGenerator[str, None]:
         """生成 LM Studio 流式响应"""
+=======
+    async def generate_stream_response(
+        self, messages: List[Dict]
+    ) -> AsyncGenerator[str, None]:
+        """生成 LM Studio 流式响应（使用专有端点）"""
+>>>>>>> c8a234ea (feat:工具基础支持)
         try:
             logger.debug("正在向 LM Studio /api/v1/chat 发送流式请求")
 
-            request_body = self._create_request_body(messages, stream=True)
+            request_body = self._create_native_request_body(messages, stream=True)
 
             async with self._get_async_client() as client:
                 async with client.stream(

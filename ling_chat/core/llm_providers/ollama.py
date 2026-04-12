@@ -1,6 +1,6 @@
 import json
 import os
-from typing import AsyncGenerator, Dict, List
+from typing import AsyncGenerator, Dict, List, Optional, Union
 
 import httpx
 
@@ -33,20 +33,67 @@ class OllamaProvider(BaseLLMProvider):
     def initialize_client(self):
         pass
 
-    def generate_response(self, messages: List[Dict]) -> str:
-        """生成Ollama模型响应"""
+    def _parse_tool_calls(self, tool_calls_raw: List[Dict]) -> List[Dict]:
+        """
+        解析 Ollama 工具调用响应
+
+        根据 Ollama OpenAPI 文档：
+        ToolCall 格式为 {function: {name, description, arguments: object}}
+        注意：arguments 是 object，不是 JSON 字符串！
+        """
+        parsed = []
+        for tc in tool_calls_raw:
+            func = tc.get("function", {})
+            # Ollama 原生 API 的 arguments 已经是对象
+            args = func.get("arguments", {})
+            if isinstance(args, str):
+                # 兼容处理：如果意外收到字符串，尝试解析
+                try:
+                    args = json.loads(args)
+                except json.JSONDecodeError:
+                    logger.warning(f"无法解析 tool_call arguments: {args}")
+                    args = {}
+            parsed.append(
+                {
+                    "id": tc.get("id", f"call_{len(parsed)}"),  # Ollama 可能不返回 id
+                    "name": func.get("name", ""),
+                    "arguments": args,
+                }
+            )
+        return parsed
+
+    def generate_response(
+        self,
+        messages: List[Dict],
+        tools: Optional[List[Dict]] = None,
+        tool_choice: str = "auto",
+    ) -> Union[str, Dict]:
+        """生成 Ollama 模型响应（使用原生 /api/chat 端点）"""
         try:
             logger.info(f"Sending request to Ollama API: {self.base_url}/api/chat")
 
-            payload = {
+            payload: Dict = {
                 "model": self.model_type,
                 "messages": messages,
+<<<<<<< HEAD
                 "options": {
                     "temperature": self.temperature,
                     "top_p": self.top_p,
                 },
+=======
+>>>>>>> c8a234ea (feat:工具基础支持)
                 "stream": False,
             }
+
+            # 添加 options（温度等参数放在 options 中）
+            payload["options"] = {
+                "temperature": self.temperature,
+                "top_p": self.top_p,
+            }
+
+            # 添加 tools 支持（Ollama 原生格式）
+            if tools:
+                payload["tools"] = tools
 
             with httpx.Client(timeout=self._timeout) as client:
                 response = client.post(f"{self.base_url}/api/chat", json=payload)
@@ -57,7 +104,23 @@ class OllamaProvider(BaseLLMProvider):
                     raise Exception(error_msg)
 
                 response_json = response.json()
-                return response_json.get("message", {}).get("content", "")
+
+                # 解析响应
+                message = response_json.get("message", {})
+                content = message.get("content", "")
+                tool_calls_raw = message.get("tool_calls", [])
+
+                # 检查是否有 tool_calls
+                if tools and tool_calls_raw:
+                    return {
+                        "content": content,
+                        "tool_calls": self._parse_tool_calls(tool_calls_raw),
+                    }
+
+                # 没有 tools 或没有 tool_calls，返回纯文本
+                if tools:
+                    return {"content": content, "tool_calls": []}
+                return content
 
         except Exception as e:
             logger.error(f"Ollama API call failed: {str(e)}")
@@ -66,7 +129,11 @@ class OllamaProvider(BaseLLMProvider):
     async def generate_stream_response(
         self, messages: List[Dict]
     ) -> AsyncGenerator[str, None]:
+<<<<<<< HEAD
         """生成Ollama流式响应
+=======
+        """生成 Ollama 流式响应
+>>>>>>> c8a234ea (feat:工具基础支持)
         :param messages: 消息列表
         :return: 返回一个生成器，每次迭代返回一个内容块
         """

@@ -1,6 +1,5 @@
 import os
-from types import NoneType
-from typing import AsyncGenerator, Dict, List
+from typing import AsyncGenerator, Dict, List, Optional, Union
 
 import httpx
 from openai import AsyncOpenAI, OpenAI
@@ -14,7 +13,7 @@ class QwenTranslateProvider(BaseLLMProvider):
     def __init__(self):
         super().__init__()
         self.client = None
-        self.async_client = NoneType
+        self.async_client = None
         self.model_type = None
         self.initialize_client()
 
@@ -41,7 +40,12 @@ class QwenTranslateProvider(BaseLLMProvider):
 
         logger.info("Qwen翻译模型初始化完毕！")
 
-    def generate_response(self, messages: List[Dict]) -> str:
+    def generate_response(
+        self,
+        messages: List[Dict],
+        tools: Optional[List[Dict]] = None,
+        tool_choice: str = "auto",
+    ) -> Union[str, Dict]:
         """生成Qwen模型响应 (同步方法保持不变)"""
         if self.client is None or self.model_type is None:
             error_message = "Qwen翻译模型未初始化，请检查配置"
