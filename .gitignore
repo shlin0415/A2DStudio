@@ -138,3 +138,7 @@ AGENTS.md
 
 # 风雪
 memory-bank/
+
+tmp/
+experience/
+.trash/
