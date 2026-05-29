@@ -105,16 +105,21 @@ class VoiceMaker:
                 ref_audio_path = os.path.join(self.character_path, ref_audio_filename)
                 logger.debug(f"gsv拼接后的参考音频路径: {ref_audio_path}")
 
+                # 获取角色级 GSV API URL（优先于环境变量）
+                gsv_api_url = tts_settings.gsv_api_url if tts_settings.gsv_api_url else None
+
                 # 优先使用环境变量定义的语音文件
                 if os.environ.get("GPT_SOVITS_REF_AUDIO", "") == "":
                     self.tts_provider.init_gsv_adapter(
                         ref_audio_path=ref_audio_path,
                         prompt_text=tts_settings.gsv_voice_text,
+                        api_url=gsv_api_url,
                     )
                 else:
                     self.tts_provider.init_gsv_adapter(
                         ref_audio_path=os.environ.get("GPT_SOVITS_REF_AUDIO", ""),
                         prompt_text=os.environ.get("GPT_SOVITS_PROMPT_TEXT", ""),
+                        api_url=gsv_api_url,
                     )
                     logger.warning("你正在使用环境变量中的GPT-SoVITS配置")
 
