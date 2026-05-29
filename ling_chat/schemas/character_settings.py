@@ -19,6 +19,10 @@ class VoiceModel(BaseModel):
     gsv_gpt_model_name: Optional[str] = None
     gsv_sovits_model_name: Optional[str] = None
     aivis_model_uuid: Optional[str] = None
+    gsv_api_url: Optional[str] = None              # e.g. http://127.0.0.1:31801
+    voice_language: Optional[str] = "ja"            # "ja" | "zh" | "en"
+    ref_audio_library_path: Optional[str] = None    # path to original audio library
+    gsv_default_params: Optional[dict] = None       # default GSV params {speed_factor, top_k, top_p, temperature}
 
 
 class CharacterSettings(BaseModel):
