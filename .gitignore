@@ -140,6 +140,14 @@ AGENTS.md
 ling_chat/static/game_data/characters/艾玛/
 ling_chat/static/game_data/characters/希罗/
 
+# A2D Studio 世界观知识（本地管理，可选导入）
+knowledge/
+
+# 备份文件
+*.orig
+*.bak1
+*.bak2
+
 # 风雪
 memory-bank/
 
