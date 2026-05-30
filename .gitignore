@@ -136,6 +136,10 @@ AGENTS.md
 #     开发者个人目录 (Developer Personal Directories)
 # ============================================================
 
+# A2D Studio 角色资源（本地管理，不入 git）
+ling_chat/static/game_data/characters/艾玛/
+ling_chat/static/game_data/characters/希罗/
+
 # 风雪
 memory-bank/
 
