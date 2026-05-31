@@ -14,6 +14,12 @@ from ling_chat.api.chat_schedule import router as chat_schedule_router
 from ling_chat.api.chat_script import router as chat_script_router
 from ling_chat.api.chat_sound import router as chat_sound_router
 from ling_chat.api.console_logs import router as console_logs_router
+
+# A2D Studio: 音频库 API（可选）
+try:
+    from ling_chat.api.audio_clips import router as audio_clips_router
+except ImportError:
+    audio_clips_router = None
 from ling_chat.api.env_config import router as env_config_router
 from ling_chat.api.file_selector import router as file_selector_router
 from ling_chat.api.frontend_routes import (
@@ -54,6 +60,13 @@ class RoutesManager:
         app.include_router(chat_adventure_router)
         app.include_router(llm_config_router)  # 注册LLM配置路由
         app.include_router(llm_test_router)  # 注册LLM测试路由
+
+        # A2D Studio: 音频库 API（可选，失败不影响主体功能）
+        if audio_clips_router is not None:
+            try:
+                app.include_router(audio_clips_router)
+            except Exception:
+                pass
 
         app.websocket("/ws")(websocket_endpoint)
 
