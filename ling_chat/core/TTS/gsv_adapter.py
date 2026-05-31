@@ -15,8 +15,7 @@ class GPTSoVITSAdapter(TTSBaseAdapter):
         prompt_text: str = "",
         prompt_lang: str = "ja",
         audio_format: str = "wav",
-        text_lang: str = "auto",
-        parallel_infer: bool = False,
+        text_lang: str = "ja",
         api_url: str | None = None,
         anti_clipping: bool = True,
     ):
@@ -50,17 +49,12 @@ class GPTSoVITSAdapter(TTSBaseAdapter):
             "top_k": 15,
             "top_p": 1.0,
             "temperature": 1.0,
-            "parallel_infer": parallel_infer,
             "text": "",
         }
 
     async def generate_voice(self, text: str) -> bytes:
         params = dict(self.params)
-        # 防吞音：每个请求前加"，，"（与 generate_voice_stream 一致）
-        if self.anti_clipping:
-            params["text"] = "，，" + text
-        else:
-            params["text"] = text
+        params["text"] = text
         logger.debug(f"发送到GPT-SoVITS的json: {params}")
 
         async with httpx.AsyncClient() as client:

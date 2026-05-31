@@ -65,7 +65,6 @@ def ema_adapter():
         ref_audio_path=REF_AUDIO_EMA,
         prompt_text=REF_TEXT_EMA,
         prompt_lang="ja",
-        text_lang="auto",
         api_url="http://127.0.0.1:31801",
     )
 
@@ -107,7 +106,6 @@ async def test_both_ports_long_text(tmp_path):
             ref_audio_path=ref_audio,
             prompt_text=ref_text,
             prompt_lang="ja",
-            text_lang="auto",
             api_url=f"http://127.0.0.1:{port}",
         )
         data = await adapter.generate_voice(LONG_JA_TEXT)
