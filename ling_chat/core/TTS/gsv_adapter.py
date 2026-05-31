@@ -46,9 +46,9 @@ class GPTSoVITSAdapter(TTSBaseAdapter):
             "text_lang": text_lang,
             "media_type": audio_format,  # 支持wav,raw,ogg,aac
             "speed_factor": 1.0,
-            "text_split_method": "cut0",
+            "text_split_method": "cut5",
             "top_k": 15,
-            "top_p": 100.0,
+            "top_p": 1.0,
             "temperature": 1.0,
             "parallel_infer": parallel_infer,
             "text": "",
