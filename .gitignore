@@ -143,6 +143,9 @@ ling_chat/static/game_data/characters/希罗/
 # A2D Studio 世界观知识（本地管理，可选导入）
 knowledge/
 
+# A2D Studio 原版音频库（本地管理）
+ref_audio_library/
+
 # 备份文件
 *.orig
 *.bak1
