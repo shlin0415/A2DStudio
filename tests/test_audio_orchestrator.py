@@ -1,9 +1,21 @@
 """测试音频三级链 — ref → cache → generate（需 GSV + Cache）"""
 import os
+import wave
 import pytest
 from ling_chat.core.audio_orchestrator import get_best_audio, AudioResult
 from ling_chat.core.TTS.gsv_adapter import GPTSoVITSAdapter
 from ling_chat.core.cache_manager import CacheManager
+
+
+def _assert_valid_wav(filepath: str):
+    with wave.open(filepath, "rb") as wf:
+        frames = wf.getnframes()
+        rate = wf.getframerate()
+        duration = frames / rate if rate > 0 else 0
+    assert duration > 0.3, (
+        f"Generated audio too short: {duration:.2f}s "
+        f"({frames} samples @ {rate}Hz)"
+    )
 
 
 REF_AUDIO = (
@@ -39,8 +51,7 @@ async def test_tier3_fallback_to_generation(ema_adapter, tmp_path):
     assert isinstance(result, AudioResult)
     assert result.source == "generated"
     assert os.path.exists(result.audio_path)
-
-
+    _assert_valid_wav(result.audio_path)
 @pytest.mark.asyncio
 async def test_tier2_cache_hit(ema_adapter, tmp_path):
     """第二次相同文本 → 命中缓存"""
@@ -56,6 +67,7 @@ async def test_tier2_cache_hit(ema_adapter, tmp_path):
         cache_manager=cm,
     )
     assert r1.source == "generated"
+    _assert_valid_wav(r1.audio_path)
     # 第二次：应命中缓存
     r2 = await get_best_audio(
         character="ema",
@@ -83,3 +95,4 @@ async def test_audio_result_has_valid_source(ema_adapter, tmp_path):
     )
     assert result.audio_path
     assert result.source in ("ref", "cache", "generated")
+    _assert_valid_wav(result.audio_path)
