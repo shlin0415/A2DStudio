@@ -16,6 +16,7 @@ class GPTSoVITSAdapter(TTSBaseAdapter):
         prompt_lang: str = "ja",
         audio_format: str = "wav",
         text_lang: str = "ja",
+        parallel_infer: bool = False,
         api_url: str | None = None,
         anti_clipping: bool = True,
     ):
@@ -49,6 +50,7 @@ class GPTSoVITSAdapter(TTSBaseAdapter):
             "top_k": 15,
             "top_p": 1.0,
             "temperature": 1.0,
+            "parallel_infer": parallel_infer,
             "text": "",
         }
 
