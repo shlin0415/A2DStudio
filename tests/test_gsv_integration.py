@@ -6,11 +6,17 @@ import httpx
 from ling_chat.core.TTS.gsv_adapter import GPTSoVITSAdapter
 
 
-REF_AUDIO = (
+REF_AUDIO_EMA = (
     "D:/aaa-new/setups/a2d-studio/ref/LingChat/"
     "ling_chat/static/game_data/characters/艾玛/0101Adv26_Ema012.wav"
 )
-REF_TEXT = "うん、ノアちゃんは新しくまた何かを描くって言ってた。"
+REF_TEXT_EMA = "うん、ノアちゃんは新しくまた何かを描くって言ってた。"
+
+REF_AUDIO_HIRO = (
+    "D:/aaa-new/setups/a2d-studio/ref/LingChat/"
+    "ling_chat/static/game_data/characters/希罗/0205Trial09_Hiro093.ogg"
+)
+REF_TEXT_HIRO = "その感情を人は……【博愛】と呼ぶんじゃないかな。"
 
 # 长句测试——模拟真实对话，验证防吞音"，，"效果
 LONG_JA_TEXT = (
@@ -56,8 +62,8 @@ def _save_and_validate(audio_bytes: bytes, tmp_path: str, label: str) -> dict:
 @pytest.fixture
 def ema_adapter():
     return GPTSoVITSAdapter(
-        ref_audio_path=REF_AUDIO,
-        prompt_text=REF_TEXT,
+        ref_audio_path=REF_AUDIO_EMA,
+        prompt_text=REF_TEXT_EMA,
         prompt_lang="ja",
         text_lang="ja",
         api_url="http://127.0.0.1:31801",
@@ -71,9 +77,8 @@ async def test_generate_voice_with_long_text(ema_adapter, tmp_path):
     assert isinstance(data, bytes)
     assert len(data) > 500
     info = _save_and_validate(data, str(tmp_path), "ema_long")
-    # 正常语速下 ~70 字日文应为 4-8 秒
     assert info["duration_s"] >= 2.0, (
-        f"Long text generated too short: {info['duration_s']}s"
+        f"Long text too short: {info['duration_s']}s"
     )
 
 
@@ -92,11 +97,15 @@ async def test_generate_voice_stream_long_text(ema_adapter, tmp_path):
 
 @pytest.mark.asyncio
 async def test_both_ports_long_text(tmp_path):
-    """双端口长句验证"""
-    for port, label in [("31801", "ema"), ("31802", "hiro")]:
+    """双端口长句——各自使用角色专属参考音频"""
+    char_configs = [
+        ("31801", "ema", REF_AUDIO_EMA, REF_TEXT_EMA),
+        ("31802", "hiro", REF_AUDIO_HIRO, REF_TEXT_HIRO),
+    ]
+    for port, label, ref_audio, ref_text in char_configs:
         adapter = GPTSoVITSAdapter(
-            ref_audio_path=REF_AUDIO,
-            prompt_text=REF_TEXT,
+            ref_audio_path=ref_audio,
+            prompt_text=ref_text,
             prompt_lang="ja",
             text_lang="ja",
             api_url=f"http://127.0.0.1:{port}",

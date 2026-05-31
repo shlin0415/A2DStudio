@@ -13,7 +13,7 @@ class GPTSoVITSAdapter(TTSBaseAdapter):
         self,
         ref_audio_path: str,
         prompt_text: str = "",
-        prompt_lang: str = "zh",
+        prompt_lang: str = "ja",
         audio_format: str = "wav",
         text_lang: str = "auto",
         parallel_infer: bool = False,
