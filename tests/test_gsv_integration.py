@@ -12,6 +12,13 @@ REF_AUDIO = (
 )
 REF_TEXT = "うん、ノアちゃんは新しくまた何かを描くって言ってた。"
 
+# 长句测试——模拟真实对话，验证防吞音"，，"效果
+LONG_JA_TEXT = (
+    "希罗ちゃん、今日も一緒にいてくれるの？"
+    "本当にありがとう。"
+    "私、希罗ちゃんがいると、なんだか安心するんだ。"
+)
+
 
 def validate_wav(filepath: str) -> dict:
     """用 wave + array 模块检查：时长 > 0.3s 且样本峰值 > 100（非静音）"""
@@ -32,8 +39,8 @@ def validate_wav(filepath: str) -> dict:
     }
 
 
-def _save_and_validate(audio_bytes: bytes, tmp_path: str, label: str) -> None:
-    """写入临时文件并断言音频有效（非静音）"""
+def _save_and_validate(audio_bytes: bytes, tmp_path: str, label: str) -> dict:
+    """写入临时文件 + 断言音频有效，返回 validate_wav 结果"""
     path = os.path.join(tmp_path, f"{label}.wav")
     with open(path, "wb") as f:
         f.write(audio_bytes)
@@ -43,6 +50,7 @@ def _save_and_validate(audio_bytes: bytes, tmp_path: str, label: str) -> None:
         f"({info['sample_count']} samples @ {info['sample_rate']}Hz) — "
         f"{'too short' if info['duration_s'] <= 0.3 else 'near-silent'}"
     )
+    return info
 
 
 @pytest.fixture
@@ -57,31 +65,34 @@ def ema_adapter():
 
 
 @pytest.mark.asyncio
-async def test_generate_voice_valid_audio(ema_adapter, tmp_path):
-    """生成一段日文语音，必须 > 0.3 秒"""
-    data = await ema_adapter.generate_voice("こんにちは")
+async def test_generate_voice_with_long_text(ema_adapter, tmp_path):
+    """长句生成：时长应 > 2s，验证防吞音"""
+    data = await ema_adapter.generate_voice(LONG_JA_TEXT)
     assert isinstance(data, bytes)
-    assert len(data) > 100
-    _save_and_validate(data, str(tmp_path), "ema_hello")
+    assert len(data) > 500
+    info = _save_and_validate(data, str(tmp_path), "ema_long")
+    # 正常语速下 ~70 字日文应为 4-8 秒
+    assert info["duration_s"] >= 2.0, (
+        f"Long text generated too short: {info['duration_s']}s"
+    )
 
 
 @pytest.mark.asyncio
-async def test_generate_voice_stream_valid_audio(ema_adapter, tmp_path):
-    """流式生成后合并所有 chunk，验证总时长 > 0.3 秒"""
+async def test_generate_voice_stream_long_text(ema_adapter, tmp_path):
+    """流式长句生成：合并后时长应 > 2s"""
     all_data = b""
-    async for chunk in ema_adapter.generate_voice_stream(
-        "こんにちは。お元気ですか。"
-    ):
+    async for chunk in ema_adapter.generate_voice_stream(LONG_JA_TEXT):
         assert isinstance(chunk, bytes)
         assert len(chunk) > 100
         all_data += chunk
-    assert len(all_data) > 0
-    _save_and_validate(all_data, str(tmp_path), "ema_stream")
+    assert len(all_data) > 500
+    info = _save_and_validate(all_data, str(tmp_path), "ema_stream_long")
+    assert info["duration_s"] >= 2.0
 
 
 @pytest.mark.asyncio
-async def test_both_ports_generate_valid_audio(tmp_path):
-    """验证两个 GSV 端口都能生成有效日文语音"""
+async def test_both_ports_long_text(tmp_path):
+    """双端口长句验证"""
     for port, label in [("31801", "ema"), ("31802", "hiro")]:
         adapter = GPTSoVITSAdapter(
             ref_audio_path=REF_AUDIO,
@@ -90,9 +101,18 @@ async def test_both_ports_generate_valid_audio(tmp_path):
             text_lang="ja",
             api_url=f"http://127.0.0.1:{port}",
         )
-        data = await adapter.generate_voice("こんにちは")
-        assert len(data) > 100, f"{label}:{port} returned {len(data)} bytes"
-        _save_and_validate(data, str(tmp_path), f"{label}_port_{port}")
+        data = await adapter.generate_voice(LONG_JA_TEXT)
+        assert len(data) > 500, f"{label}:{port} only {len(data)} bytes"
+        info = _save_and_validate(data, str(tmp_path), f"{label}_long_port{port}")
+        assert info["duration_s"] >= 2.0, (
+            f"{label}:{port} too short: {info['duration_s']}s"
+        )
+
+
+@pytest.mark.asyncio
+async def test_anti_clipping_default(ema_adapter):
+    """anti_clipping 默认开启"""
+    assert ema_adapter.anti_clipping is True
 
 
 @pytest.mark.asyncio

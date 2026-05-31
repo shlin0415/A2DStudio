@@ -55,8 +55,12 @@ class GPTSoVITSAdapter(TTSBaseAdapter):
         }
 
     async def generate_voice(self, text: str) -> bytes:
-        params = self.params
-        params["text"] = text
+        params = dict(self.params)
+        # 防吞音：每个请求前加"，，"（与 generate_voice_stream 一致）
+        if self.anti_clipping:
+            params["text"] = "，，" + text
+        else:
+            params["text"] = text
         logger.debug(f"发送到GPT-SoVITS的json: {params}")
 
         async with httpx.AsyncClient() as client:
