@@ -1,4 +1,6 @@
 import os
+import re
+from typing import AsyncGenerator
 
 import httpx
 
@@ -16,7 +18,9 @@ class GPTSoVITSAdapter(TTSBaseAdapter):
         text_lang: str = "auto",
         parallel_infer: bool = True,
         api_url: str | None = None,
+        anti_clipping: bool = True,
     ):
+        self.anti_clipping = anti_clipping
         if api_url:
             self.api_url = api_url.rstrip("/")
         else:
@@ -62,6 +66,48 @@ class GPTSoVITSAdapter(TTSBaseAdapter):
             if response.status_code != 200:
                 raise RuntimeError(f"TTS请求失败: {response.text}")
             return response.content
+
+    def _split_text(self, text: str) -> list[str]:
+        """按语义标点切分文本，不做硬性数字截断"""
+        if not text:
+            return []
+
+        # 一级切分（强）：句末标点
+        strong = re.split(r"(?<=[。！？；])", text)
+        chunks: list[str] = []
+        for seg in strong:
+            if not seg:
+                continue
+            # 二级切分（弱）：从句内标点，但保留最小长度
+            if len(seg) > 20:
+                sub = re.split(r"(?<=[、，,])", seg)
+                chunks.extend(s for s in sub if s)
+            else:
+                chunks.append(seg)
+        return [c for c in chunks if c]
+
+    async def generate_voice_stream(
+        self, text: str
+    ) -> AsyncGenerator[bytes, None]:
+        """流式生成语音：逐 chunk 调用 GSV API，yield wav bytes"""
+        chunks = self._split_text(text)
+
+        for chunk in chunks:
+            params = dict(self.params)
+            # 每个 chunk 前加"，，"防吞音（默认开启，可关闭）
+            if self.anti_clipping:
+                params["text"] = "，，" + chunk
+            else:
+                params["text"] = chunk
+
+            async with httpx.AsyncClient() as client:
+                response = await client.post(
+                    self.api_url + "/tts", json=params, timeout=30.0
+                )
+                if response.status_code != 200:
+                    logger.warning(f"TTS chunk failed: {response.text}")
+                    continue
+                yield response.content
 
     async def set_model(self, gpt_model_path: str, sovits_model_path: str) -> bool:
         """
