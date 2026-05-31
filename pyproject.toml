@@ -60,8 +60,7 @@ resolution = "highest"
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
-addopts = ["-v", "--tb=short"]
-basetemp = "tmp/pytest"
+addopts = ["-v", "--tb=short", "--basetemp=tmp/pytest"]
 
 [tool.ruff]
 # 设置最大行长度
