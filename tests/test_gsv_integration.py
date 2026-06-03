@@ -15,14 +15,8 @@ from ling_chat.core.TTS.gsv_adapter import GPTSoVITSAdapter
 
 _PROJECT_ROOT = Path(__file__).resolve().parent.parent
 _CHAR_BASE = _PROJECT_ROOT / "ling_chat" / "static" / "game_data" / "characters"
-_JSONL_PATH = Path(
-    "D:/aaa-new/setups/a2d-studio/ref/try-test/dialogue-server/output/"
-    "old-real-dialogue-ja.jsonl"
-)
-_REF_AUDIO_DIR = Path(
-    "D:/aaa-new/setups/a2d-studio/ref/try-test/voice-server/output/"
-    "dual_port_test_audio"
-)
+_DIALOGUE_PATH = _CHAR_BASE / "艾玛" / "test_data" / "dialogue.jsonl"
+
 
 
 # ═══════════════════════════════════════════════════════════════
@@ -66,9 +60,9 @@ HIRO_CONFIG = {
 # ═══════════════════════════════════════════════════════════════
 
 def _load_dialogue_lines() -> list[dict]:
-    """从 JSONL 加载对话行，跳过 header，返回每角色各行"""
+    """从角色 test_data/dialogue.jsonl 加载对话行，跳过 header，返回每角色各行"""
     lines: list[dict] = []
-    with open(_JSONL_PATH, "r", encoding="utf-8") as f:
+    with open(_DIALOGUE_PATH, "r", encoding="utf-8") as f:
         for line in f:
             line = line.strip()
             if not line:
@@ -260,12 +254,13 @@ async def test_hiro_all_lines(hiro_adapter, tmp_path):
 
 
 # ═══════════════════════════════════════════════════════════════
-# 与已知正确音频比对（参考：dual_port_test_audio/）
+# 与已知正确音频比对（参考：角色 test_data/ 目录内）
 # ═══════════════════════════════════════════════════════════════
 
 def _ref_audio_info(character: str, index: int) -> dict | None:
     """读取参考音频的元信息，文件不存在则返回 None"""
-    path = _REF_AUDIO_DIR / f"{character}_{index:02d}.wav"
+    folder = "艾玛" if character == "ema" else "希罗"
+    path = _CHAR_BASE / folder / "test_data" / f"{character}_{index:02d}.wav"
     if not path.exists():
         return None
     return validate_wav(str(path))
