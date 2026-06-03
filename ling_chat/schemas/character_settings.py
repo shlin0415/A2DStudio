@@ -23,6 +23,8 @@ class VoiceModel(BaseModel):
     voice_language: Optional[str] = "ja"            # "ja" | "zh" | "en"
     ref_audio_library_path: Optional[str] = None    # path to original audio library
     gsv_default_params: Optional[dict] = None       # default GSV params {speed_factor, top_k, top_p, temperature}
+    openai_tts_model: Optional[str] = None
+    openai_tts_voice: Optional[str] = None
 
 
 class CharacterSettings(BaseModel):
@@ -56,6 +58,7 @@ class CharacterSettings(BaseModel):
     # 语音与TTS
     voice_models: Optional[VoiceModel] = None
     tts_type: Optional[str] = None
+    tts_language: Optional[str] = "ja"
 
     # UI / 气泡
     thinking_message: str = "正在思考中..."

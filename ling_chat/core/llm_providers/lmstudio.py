@@ -4,6 +4,7 @@ from typing import Any, AsyncGenerator, Dict, List, Optional
 import httpx
 
 from ling_chat.configs.llm_config import llm_config
+from ling_chat.core.llm_providers._http import build_httpx_client
 from ling_chat.core.logger import logger
 
 from .base import BaseLLMProvider
@@ -12,7 +13,7 @@ from .base import BaseLLMProvider
 # LM Studio API 文档：https://lmstudio.ai/docs/developer/rest/chat
 # POST /api/v1/chat
 class LMStudioProvider(BaseLLMProvider):
-    def __init__(self, model_type: str = "", api_key: str = "", base_url: str = "", proxy: str = ""):
+    def __init__(self, model_type: str = "", api_key: str = "", base_url: str = ""):
         super().__init__()
         main_cfg = llm_config.get_main_config()
         self.model_type = model_type or main_cfg.get("model", "")
@@ -20,6 +21,7 @@ class LMStudioProvider(BaseLLMProvider):
         self.api_token = api_key
         self._temperature = float(main_cfg.get("temperature", 1.3))
         self._top_p = float(main_cfg.get("top_p", 0.9))
+        self._max_tokens = int(main_cfg.get("max_tokens", 8192))
 
     def initialize_client(self):
         """LM Studio 客户端在每次请求时创建，无需初始化"""
@@ -33,17 +35,22 @@ class LMStudioProvider(BaseLLMProvider):
         return headers
 
     def _get_http_client(self):
-        """获取同步 HTTP 客户端"""
+        """获取同步 HTTP 客户端（本地地址自动绕过全局代理）"""
         timeout_config = httpx.Timeout(connect=20.0, read=60.0, write=20.0, pool=20.0)
-        return httpx.Client(
-            base_url=self.base_url, headers=self._get_headers(), timeout=timeout_config
+        return build_httpx_client(
+            timeout=timeout_config,
+            base_url=self.base_url,
+            headers=self._get_headers(),
         )
 
     def _get_async_client(self):
-        """获取异步 HTTP 客户端"""
+        """获取异步 HTTP 客户端（本地地址自动绕过全局代理）"""
         timeout_config = httpx.Timeout(connect=20.0, read=60.0, write=20.0, pool=20.0)
-        return httpx.AsyncClient(
-            base_url=self.base_url, headers=self._get_headers(), timeout=timeout_config
+        return build_httpx_client(
+            async_client=True,
+            timeout=timeout_config,
+            base_url=self.base_url,
+            headers=self._get_headers(),
         )
 
     def _build_input_messages(self, messages: List[Dict]) -> List[Dict]:
@@ -150,10 +157,9 @@ class LMStudioProvider(BaseLLMProvider):
         body["temperature"] = temp_value
         body["top_p"] = self._top_p
 
-        # 以下参数未使用（暂不实现）
-        max_tokens = None
-        if max_tokens:
-            body["max_output_tokens"] = int(max_tokens)
+        # max_tokens
+        if self._max_tokens:
+            body["max_output_tokens"] = self._max_tokens
 
         top_k = os.environ.get("TOP_K")
         if top_k:

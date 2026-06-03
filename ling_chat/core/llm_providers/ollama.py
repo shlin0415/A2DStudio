@@ -4,6 +4,7 @@ from typing import AsyncGenerator, Dict, List
 import httpx
 
 from ling_chat.configs.llm_config import llm_config
+from ling_chat.core.llm_providers._http import build_httpx_client
 from ling_chat.core.llm_providers.base import BaseLLMProvider
 from ling_chat.core.logger import logger
 
@@ -18,7 +19,7 @@ def _normalize_base_url(raw: str) -> str:
 
 
 class OllamaProvider(BaseLLMProvider):
-    def __init__(self, model_type: str = "", api_key: str = "", base_url: str = "", proxy: str = ""):
+    def __init__(self, model_type: str = "", api_key: str = "", base_url: str = ""):
         super().__init__()
         self.model_type = model_type or "llama3"
         self.base_url = _normalize_base_url(base_url or "http://localhost:11434")
@@ -26,6 +27,7 @@ class OllamaProvider(BaseLLMProvider):
         self._timeout = httpx.Timeout(connect=20.0, read=60.0, write=20.0, pool=20.0)
         self.temperature = main_cfg.get("temperature", 1.3)
         self.top_p = main_cfg.get("top_p", 0.9)
+        self.max_tokens = int(main_cfg.get("max_tokens", 8192))
 
     def initialize_client(self):
         pass
@@ -41,11 +43,14 @@ class OllamaProvider(BaseLLMProvider):
                 "options": {
                     "temperature": self.temperature,
                     "top_p": self.top_p,
+                    "num_predict": self.max_tokens,
                 },
                 "stream": False,
             }
 
-            with httpx.Client(timeout=self._timeout) as client:
+            with build_httpx_client(
+                timeout=self._timeout, base_url=self.base_url
+            ) as client:
                 response = client.post(f"{self.base_url}/api/chat", json=payload)
 
                 if response.status_code != 200:
@@ -76,11 +81,14 @@ class OllamaProvider(BaseLLMProvider):
                 "options": {
                     "temperature": self.temperature,
                     "top_p": self.top_p,
+                    "num_predict": self.max_tokens,
                 },
                 "stream": True,
             }
 
-            async with httpx.AsyncClient(timeout=self._timeout) as client:
+            async with build_httpx_client(
+                async_client=True, timeout=self._timeout, base_url=self.base_url
+            ) as client:
                 async with client.stream(
                     "POST",
                     f"{self.base_url}/api/chat",
