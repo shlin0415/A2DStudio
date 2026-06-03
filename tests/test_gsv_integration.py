@@ -53,7 +53,7 @@ HIRO_CONFIG = {
     "top_k": 15,
     "top_p": 1.0,
     "temperature": 1.0,
-    "parallel_infer": False,  # v2ProPlus 两种模式均正常
+    "parallel_infer": True,  # 与 origin 脚本一致
 }
 
 
@@ -338,7 +338,7 @@ def test_hiro_adapter_params(hiro_adapter):
     assert p["top_k"] == 15
     assert p["top_p"] == 1.0
     assert p["temperature"] == 1.0
-    assert p["parallel_infer"] is False
+    assert p["parallel_infer"] is True
     assert "0205Trial09_Hiro093" in str(p["ref_audio_path"])
     assert "博愛" in p["prompt_text"]
 

@@ -16,7 +16,7 @@ class GPTSoVITSAdapter(TTSBaseAdapter):
         prompt_lang: str = "ja",
         audio_format: str = "wav",
         text_lang: str = "ja",
-        parallel_infer: bool = False,
+        parallel_infer: bool = True,
         api_url: str | None = None,
         anti_clipping: bool = True,
         speed_factor: float = 1.0,
