@@ -19,6 +19,10 @@ class GPTSoVITSAdapter(TTSBaseAdapter):
         parallel_infer: bool = False,
         api_url: str | None = None,
         anti_clipping: bool = True,
+        speed_factor: float = 1.0,
+        top_k: int = 15,
+        top_p: float = 1.0,
+        temperature: float = 1.0,
     ):
         self.anti_clipping = anti_clipping
         if api_url:
@@ -45,11 +49,11 @@ class GPTSoVITSAdapter(TTSBaseAdapter):
             "prompt_lang": prompt_lang,
             "text_lang": text_lang,
             "media_type": audio_format,  # 支持wav,raw,ogg,aac
-            "speed_factor": 1.0,
+            "speed_factor": speed_factor,
             "text_split_method": "cut5",
-            "top_k": 15,
-            "top_p": 1.0,
-            "temperature": 1.0,
+            "top_k": top_k,
+            "top_p": top_p,
+            "temperature": temperature,
             "parallel_infer": parallel_infer,
             "text": "",
         }
