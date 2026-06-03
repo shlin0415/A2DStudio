@@ -120,7 +120,15 @@ class TTS:
         )
 
     def init_gsv_adapter(
-        self, ref_audio_path: str, prompt_text: str, prompt_lang: str = "auto"
+        self,
+        ref_audio_path: str,
+        prompt_text: str,
+        prompt_lang: str = "auto",
+        api_url: str | None = None,
+        speed_factor: float = 1.0,
+        top_k: int = 15,
+        top_p: float = 1.0,
+        temperature: float = 1.0,
     ):
         """
         初始化GSV适配器
@@ -128,11 +136,21 @@ class TTS:
         :param ref_audio_path: 参考音频路径
         :param prompt_text: 提示文本
         :param prompt_lang: 提示语言，默认为"auto"
+        :param api_url: GSV API URL（per-character port）
+        :param speed_factor: 语速 (ema: 0.95, hiro: 1.05)
+        :param top_k: Top-K 采样
+        :param top_p: Top-P 采样
+        :param temperature: 温度
         """
         self.gsv_adapter = GPTSoVITSAdapter(
             ref_audio_path=ref_audio_path,
             prompt_text=prompt_text,
             prompt_lang=prompt_lang,
+            api_url=api_url,
+            speed_factor=speed_factor,
+            top_k=top_k,
+            top_p=top_p,
+            temperature=temperature,
         )
 
     def init_index_adapter(self):

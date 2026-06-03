@@ -116,18 +116,33 @@ class VoiceMaker:
                 # 获取角色级 GSV API URL（优先于环境变量）
                 gsv_api_url = tts_settings.gsv_api_url if tts_settings.gsv_api_url else None
 
+                # 获取角色级 GSV 默认参数（来自 settings.yml gsv_default_params）
+                gsv_params = tts_settings.gsv_default_params or {}
+                gsv_speed = gsv_params.get("speed_factor", 1.0)
+                gsv_top_k = gsv_params.get("top_k", 15)
+                gsv_top_p = gsv_params.get("top_p", 1.0)
+                gsv_temp = gsv_params.get("temperature", 1.0)
+
                 # 优先使用环境变量定义的语音文件
                 if os.environ.get("GPT_SOVITS_REF_AUDIO", "") == "":
                     self.tts_provider.init_gsv_adapter(
                         ref_audio_path=ref_audio_path,
                         prompt_text=tts_settings.gsv_voice_text,
                         api_url=gsv_api_url,
+                        speed_factor=gsv_speed,
+                        top_k=gsv_top_k,
+                        top_p=gsv_top_p,
+                        temperature=gsv_temp,
                     )
                 else:
                     self.tts_provider.init_gsv_adapter(
                         ref_audio_path=os.environ.get("GPT_SOVITS_REF_AUDIO", ""),
                         prompt_text=os.environ.get("GPT_SOVITS_PROMPT_TEXT", ""),
                         api_url=gsv_api_url,
+                        speed_factor=gsv_speed,
+                        top_k=gsv_top_k,
+                        top_p=gsv_top_p,
+                        temperature=gsv_temp,
                     )
                     logger.warning("你正在使用环境变量中的GPT-SoVITS配置")
 
