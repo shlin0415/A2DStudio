@@ -9,6 +9,16 @@ from ling_chat.schemas.script_overlay import SceneConfig, ScriptLine
 
 
 @dataclass
+class CharacterConfig:
+    """Per-character configuration loaded from settings.yml."""
+    script_role_key: str          # "ema" | "hiro"
+    character_folder: str         # "艾玛" | "希罗"
+    voice_language: str = "ja"    # TTS 语音语言 (ja/zh/en)，来自 settings.yml voice_language
+    display_language: str = "zh"  # 前端显示文本语言 (ja/zh/en)
+    tts_type: str = "gsv"
+
+
+@dataclass
 class BudgetStatus:
     remaining_tokens: int = 0
     remaining_cost_yuan: float = 0.0
@@ -19,10 +29,13 @@ class BudgetStatus:
 class SessionRuntime:
     """Coordinates LLM / TTS / Playback lifecycles with epoch-based invalidation."""
 
-    def __init__(self):
+    def __init__(self, characters: dict[str, "CharacterConfig"] | None = None):
         self.session_id: str = str(uuid.uuid4())
         self.generation_epoch: int = 0
         self.mode: str = "auto"  # "auto" | "script" | "asmr"
+
+        # Character configs: script_role_key → CharacterConfig
+        self.characters: dict[str, CharacterConfig] = characters or {}
 
         # Queues
         self.sentence_queue: asyncio.Queue = asyncio.Queue()

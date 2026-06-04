@@ -3,6 +3,7 @@ import os
 from typing import Dict
 
 from ling_chat.core.ai_service.ai_logger import AILogger
+from ling_chat.core.session_runtime import CharacterConfig, SessionRuntime
 from ling_chat.core.ai_service.config import AIServiceConfig
 from ling_chat.core.ai_service.exceptions import ScriptEngineError
 from ling_chat.core.ai_service.game_system.game_status import GameStatus
@@ -70,6 +71,9 @@ class AIService:
         self.proactive_system.start()
 
         self.scripts_manager = ScriptManager(self.config, self.game_status)
+
+        # A2D Studio: script-editor session orchestrator
+        self.a2d_session: SessionRuntime = SessionRuntime()
 
         # 特别的，设定当游戏角色被导入的时候，设定它为游戏主角，其他情况下则以变量为准，并初始化system prompt
         self._init_game_status()
@@ -486,3 +490,288 @@ class AIService:
             pass
 
         logger.info("AI服务已关闭")
+
+    # ── A2D Studio: Script Editor Methods ─────────────────────────
+
+    async def a2d_generate_next(
+        self,
+        scene_suffix: str | None = None,
+    ) -> dict | None:
+        """Generate the next script line with LLM (text only, no TTS).
+
+        LLM decides who speaks via JSON speaker markers:
+          {"speaker":"ema"}\\n【高兴】text<TTS_text>（动作）
+
+        Returns a WS-ready dict:
+          { type: "script_line", payload: {id, speaker, display_text, tts_text, index} }
+        """
+        import json as json_mod
+        from ling_chat.schemas.script_overlay import ScriptLine
+
+        session = self.a2d_session
+        if not session.characters:
+            raise RuntimeError("No characters configured in SessionRuntime")
+
+        system_prompt = self._a2d_build_system_prompt(scene_suffix)
+        messages = self._a2d_build_messages(system_prompt)
+        full_text = await self._a2d_call_llm_with_retry(messages)
+
+        # Parse LLM response — LLM decides speaker via JSON markers
+        first_key = list(session.characters.keys())[0]
+        current_speaker = first_key
+        lines = []
+
+        for raw_line in full_text.split("\n"):
+            raw_line = raw_line.strip()
+            if not raw_line:
+                continue
+
+            # Check for speaker marker: {"speaker":"ema"}
+            try:
+                if raw_line.startswith("{") and '"speaker"' in raw_line:
+                    marker = json_mod.loads(raw_line)
+                    speaker_id = marker.get("speaker", "")
+                    if speaker_id in session.characters:
+                        current_speaker = speaker_id
+                    continue
+            except (json_mod.JSONDecodeError, KeyError, ValueError):
+                pass
+
+            # Parse: 【emotion】content<TTS>（action）
+            line = self._a2d_parse_script_line(raw_line, current_speaker)
+            if line:
+                session.add_line(line)
+                lines.append(line)
+
+        if not lines:
+            raise RuntimeError(
+                f"LLM returned no valid script lines. Raw: {full_text[:300]}"
+            )
+
+        line = lines[0]
+        return {
+            "type": "script_line",
+            "payload": {
+                "id": line.id,
+                "speaker": line.speaker,
+                "display_text": line.display_text,
+                "tts_text": line.tts_text,
+                "index": line.index,
+            },
+        }
+
+    def _a2d_build_system_prompt(self, scene_suffix: str | None = None) -> str:
+        """Build system prompt with character configs, scene, and knowledge.
+
+        Language instructions are generated dynamically from CharacterConfig,
+        not hardcoded.
+        """
+        session = self.a2d_session
+        chars = session.characters
+
+        parts = ["你是一个双人对话生成器。根据以下角色设定生成自然对话。"]
+
+        # Per-character info + knowledge
+        for key, cfg in chars.items():
+            parts.append(f"\n## {cfg.character_folder}（speaker_id: {key}）")
+            knowledge = self._a2d_load_knowledge(key, cfg.character_folder)
+            if knowledge:
+                parts.append(knowledge)
+
+        # Scene
+        if scene_suffix:
+            parts.append(f"\n{scene_suffix}")
+
+        # Language instructions — derived from config, not hardcoded
+        lang_lines = []
+        for key, cfg in chars.items():
+            lang_lines.append(
+                f"  {cfg.character_folder}: 显示语言={cfg.display_language}, "
+                f"TTS语音语言={cfg.voice_language}"
+            )
+        lang_info = "\n".join(lang_lines)
+
+        # Determine whether dual-language mode is needed for any character
+        dual_lang_chars = [
+            key for key, cfg in chars.items()
+            if cfg.display_language != cfg.voice_language
+        ]
+
+        tts_instruction = ""
+        if dual_lang_chars:
+            tts_instruction = (
+                "部分角色的显示语言与TTS语言不同，"
+                "请在<>内提供TTS朗读文本。"
+            )
+        else:
+            tts_instruction = "可省略<TTS文本>（显示语言与TTS语言相同）。"
+
+        parts.append(f"""
+## 输出格式
+每句话前标注说话者，然后使用标准格式：
+
+{{"speaker":"ema"}}
+【情绪】显示文本<TTS朗读文本>（动作描述）
+
+规则：
+- speaker 使用上面定义的 speaker_id
+- 【情绪】方括号内为情绪标签
+- <TTS朗读文本> 尖括号内为TTS朗读文本，{tts_instruction}
+- （动作描述）圆括号内为动作，可省略
+- 你可以让同一角色连续说多句话
+- 用自然的对话节奏，不需要严格交替
+
+## 角色语言设定
+{lang_info}
+""")
+        return "\n".join(parts)
+
+    def _a2d_load_knowledge(self, speaker_id: str, folder_name: str) -> str | None:
+        """Load character knowledge from knowledge/ directory."""
+        from pathlib import Path
+
+        knowledge_dir = (
+            Path("ling_chat/static/game_data/characters")
+            / folder_name
+            / "knowledge"
+        )
+        if not knowledge_dir.exists():
+            return None
+
+        parts = []
+        for f in sorted(knowledge_dir.glob("*.md")):
+            try:
+                parts.append(f.read_text(encoding="utf-8"))
+            except Exception as e:
+                logger.warning(f"A2D: failed to read knowledge file {f}: {e}")
+        return "\n\n".join(parts) if parts else None
+
+    def _a2d_build_messages(self, system_prompt: str) -> list[dict]:
+        """Build LLM message list from SessionRuntime script_lines state."""
+        session = self.a2d_session
+
+        messages = [{"role": "system", "content": system_prompt}]
+
+        for line in session.script_lines:
+            if line.speaker == "narrator":
+                messages.append({
+                    "role": "user",
+                    "content": f"{{旁白: {line.display_text}}}",
+                })
+            else:
+                messages.append({
+                    "role": "assistant",
+                    "content": (
+                        f'{{"speaker":"{line.speaker}"}}\n'
+                        f"【】{line.display_text}"
+                    ),
+                })
+
+        if len(session.script_lines) == 0:
+            messages.append({
+                "role": "user",
+                "content": "{旁白：开场}\n剧本家希望两个角色开始对话。",
+            })
+
+        logger.debug(
+            f"A2D messages built: {len(messages)} messages, "
+            f"{len(session.script_lines)} history lines"
+        )
+        return messages
+
+    async def _a2d_call_llm_with_retry(self, messages: list[dict]) -> str:
+        """Call LLM with retry logic (3 attempts, 5s/15s/30s backoff)."""
+        last_error = None
+        for attempt in range(3):
+            try:
+                full_text = ""
+                async for chunk in self.llm_model.process_message_stream(messages):
+                    if isinstance(chunk, str):
+                        full_text += chunk
+                    elif hasattr(chunk, "content"):
+                        full_text += chunk.content or ""
+                    elif isinstance(chunk, dict):
+                        full_text += chunk.get("content", "") or str(chunk)
+                    else:
+                        full_text += str(chunk)
+                if full_text.strip():
+                    logger.debug(
+                        f"A2D LLM response ({len(full_text)} chars): "
+                        f"{full_text[:200]}..."
+                    )
+                    return full_text
+                raise RuntimeError("LLM returned empty response")
+            except asyncio.TimeoutError as e:
+                last_error = e
+                if attempt < 2:
+                    delay = [5, 15, 30][attempt]
+                    logger.warning(
+                        f"A2D LLM timeout attempt {attempt+1}/3, retrying in {delay}s"
+                    )
+                    await asyncio.sleep(delay)
+            except Exception as e:
+                last_error = e
+                if attempt < 2:
+                    delay = [5, 15, 30][attempt]
+                    logger.warning(
+                        f"A2D LLM error attempt {attempt+1}/3: {e}, retrying in {delay}s"
+                    )
+                    await asyncio.sleep(delay)
+
+        raise last_error or RuntimeError("LLM call failed after 3 retries")
+
+    def _a2d_parse_script_line(
+        self, raw_text: str, speaker: str
+    ) -> "ScriptLine | None":
+        """Parse one line of LLM output into a ScriptLine.
+
+        Expected format: 【emotion】display_text<TTS_text>（action）
+        Language-agnostic — no assumptions about ja/zh/en.
+        """
+        import re
+        from ling_chat.schemas.script_overlay import ScriptLine
+
+        text = raw_text.strip()
+        if not text:
+            return None
+
+        # Parse: 【emotion】content<TTS>（action）
+        content = re.sub(r"^【.*?】", "", text).strip()
+        if not content:
+            content = text
+
+        tts_match = re.search(r"<(.+?)>", content)
+        tts_text = tts_match.group(1) if tts_match else content
+        display_text = re.sub(r"<.+?>", "", content).strip()
+        display_text = re.sub(r"（.+?）$", "", display_text).strip()
+
+        if not display_text:
+            display_text = text
+            tts_text = text
+
+        return ScriptLine(
+            speaker=speaker,
+            display_text=display_text,
+            tts_text=tts_text,
+            state="approved",
+        )
+
+    async def a2d_synthesize(self, line_id: str, text: str) -> str:
+        """Synthesize TTS for a script line. Returns audio file path."""
+        import os
+
+        if not hasattr(self, 'tts_provider') or not self.tts_provider:
+            raise RuntimeError("TTS provider not initialized")
+        if not self.tts_provider.gsv_adapter:
+            raise RuntimeError("GSV adapter not initialized")
+
+        output_path = os.path.join(
+            str(self.tts_provider.temp_dir),
+            f"a2d_{line_id}.wav",
+        )
+
+        audio_data = await self.tts_provider.gsv_adapter.generate_voice(text)
+        with open(output_path, "wb") as f:
+            f.write(audio_data)
+
+        return output_path

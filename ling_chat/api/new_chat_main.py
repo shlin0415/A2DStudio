@@ -216,11 +216,14 @@ class WebSocketManager:
     async def _handle_a2d_start(self, client_id: str, message: dict):
         """Handle A2D script-editor start message."""
         payload = message.get("payload", {})
-        character = payload.get("character", "ema")
         topic = payload.get("topic")
 
         ai_service = service_manager.get_ai_service()
         session = ai_service.a2d_session
+
+        # Populate character configs if not already set
+        if not session.characters:
+            session.characters = _a2d_build_character_configs(ai_service)
 
         session.mode = "script"
         session.paused = False
@@ -235,12 +238,35 @@ class WebSocketManager:
         })
 
         try:
+            # Step 1: Generate text (LLM decides speaker)
             result = await ai_service.a2d_generate_next(
-                character=character,
                 scene_suffix=session.build_scene_prompt_suffix(),
             )
             if result:
                 await self.send_to_client(client_id, result)
+
+            # Step 2: Synthesize TTS (separate call)
+            if result and result.get("payload"):
+                await self.send_to_client(client_id, {
+                    "type": "status",
+                    "payload": {"phase": "synthesizing"},
+                })
+                pl = result["payload"]
+                try:
+                    audio_path = await ai_service.a2d_synthesize(
+                        pl["id"], pl["tts_text"]
+                    )
+                    await self.send_to_client(client_id, {
+                        "type": "tts_ready",
+                        "payload": {"id": pl["id"], "audio_path": audio_path},
+                    })
+                except Exception as tts_e:
+                    logger.warning(f"A2D TTS failed (non-fatal): {tts_e}")
+
+            await self.send_to_client(client_id, {
+                "type": "status",
+                "payload": {"phase": "paused"},
+            })
         except Exception as e:
             logger.error(f"A2D start failed: {e}")
             await self.send_to_client(client_id, {
@@ -272,12 +298,32 @@ class WebSocketManager:
         })
 
         try:
-            result = await ai_service.a2d_generate_next(
-                character=None,
-                scene_suffix=None,
-            )
+            result = await ai_service.a2d_generate_next(scene_suffix=None)
             if result:
                 await self.send_to_client(client_id, result)
+
+            # TTS
+            if result and result.get("payload"):
+                await self.send_to_client(client_id, {
+                    "type": "status",
+                    "payload": {"phase": "synthesizing"},
+                })
+                pl = result["payload"]
+                try:
+                    audio_path = await ai_service.a2d_synthesize(
+                        pl["id"], pl["tts_text"]
+                    )
+                    await self.send_to_client(client_id, {
+                        "type": "tts_ready",
+                        "payload": {"id": pl["id"], "audio_path": audio_path},
+                    })
+                except Exception as tts_e:
+                    logger.warning(f"A2D TTS failed (non-fatal): {tts_e}")
+
+            await self.send_to_client(client_id, {
+                "type": "status",
+                "payload": {"phase": "paused"},
+            })
         except Exception as e:
             logger.error(f"A2D continue failed: {e}")
             await self.send_to_client(client_id, {
@@ -310,12 +356,31 @@ class WebSocketManager:
         })
 
         try:
-            result = await ai_service.a2d_generate_next(
-                character=None,
-                scene_suffix=None,
-            )
+            result = await ai_service.a2d_generate_next(scene_suffix=None)
             if result:
                 await self.send_to_client(client_id, result)
+
+            if result and result.get("payload"):
+                await self.send_to_client(client_id, {
+                    "type": "status",
+                    "payload": {"phase": "synthesizing"},
+                })
+                pl = result["payload"]
+                try:
+                    audio_path = await ai_service.a2d_synthesize(
+                        pl["id"], pl["tts_text"]
+                    )
+                    await self.send_to_client(client_id, {
+                        "type": "tts_ready",
+                        "payload": {"id": pl["id"], "audio_path": audio_path},
+                    })
+                except Exception as tts_e:
+                    logger.warning(f"A2D TTS failed (non-fatal): {tts_e}")
+
+            await self.send_to_client(client_id, {
+                "type": "status",
+                "payload": {"phase": "paused"},
+            })
         except Exception as e:
             logger.error(f"A2D retry failed: {e}")
             await self.send_to_client(client_id, {
@@ -366,6 +431,40 @@ class WebSocketManager:
                     "max_retries": 1,
                 },
             })
+
+def _a2d_build_character_configs(ai_service) -> dict:
+    """Build CharacterConfig dict from LingChat AIService character settings.
+
+    Reads from settings.yml fields: script_role_key, character_folder, voice_language.
+    Falls back to sensible defaults if fields are not set.
+    """
+    from ling_chat.core.session_runtime import CharacterConfig
+
+    settings = getattr(ai_service, 'settings', None)
+    configs = {}
+
+    if settings:
+        role_key = getattr(settings, 'script_role_key', None) or "ema"
+        folder = getattr(settings, 'character_folder', None) or "Unknown"
+        voice_lang = getattr(settings, 'voice_language', None) or "ja"
+        # display_language: if LLM_OUTPUT_SEC_LANG is enabled, it's zh with ja TTS
+        display_lang = "zh"  # LingChat default display language
+        gsv_api_url = getattr(settings, 'gsv_api_url', None)
+
+        configs[role_key] = CharacterConfig(
+            script_role_key=role_key,
+            character_folder=folder,
+            voice_language=voice_lang,
+            display_language=display_lang,
+        )
+
+        logger.info(
+            f"A2D character configs built: {len(configs)} characters"
+        )
+    else:
+        logger.error("A2D: no character settings found in AIService")
+
+    return configs
 
 
 # 改进的端点函数
