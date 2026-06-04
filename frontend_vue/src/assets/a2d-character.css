@@ -1,0 +1,19 @@
+/* A2D Studio — character speaking/dimmed animations */
+/* Non-invasive: overlays on top of LingChat's existing .normal / emotion keyframes */
+
+@keyframes speaking-float {
+  0%, 100% { transform: translateY(0); }
+  50%      { transform: translateY(-4px); }
+}
+
+.a2d-is-speaking {
+  animation: speaking-float 2s ease-in-out infinite;
+  filter: brightness(1);
+  transition: filter 0.3s ease, transform 0.3s ease;
+}
+
+.a2d-is-dimmed {
+  filter: brightness(0.6);
+  transform: scale(0.97);
+  transition: filter 0.3s ease, transform 0.3s ease;
+}
