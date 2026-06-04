@@ -6,6 +6,7 @@ import { createRouter, createWebHistory } from 'vue-router'
 const Credits = () => import('../components/views/Credits.vue')
 const ComapionMode = () => import('../components/views/CompanionMode.vue')
 const MainMenu = () => import('../components/views/MainMenu.vue')
+const StageView = () => import('../views/StageView.vue')
 
 // 1. 定义路由表
 const routes = [
@@ -18,6 +19,11 @@ const routes = [
     path: '/chat',
     name: 'LingChat',
     component: ComapionMode,
+  },
+  {
+    path: '/stage',
+    name: 'A2DStage',
+    component: StageView,
   },
   {
     path: '/credit',
