@@ -66,7 +66,6 @@ class WSMessage:
 
 @dataclass
 class StartPayload:
-    character: str  # "ema" | "hiro"
     topic: str | None = None
 
 
