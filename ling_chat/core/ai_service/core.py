@@ -564,25 +564,42 @@ class AIService:
         """Build system prompt with character configs, scene, and knowledge.
 
         Language instructions are generated dynamically from CharacterConfig,
-        not hardcoded.
+        not hardcoded. Reuses LingChat format conventions ({旁白}, 【情绪】, <TTS>).
         """
         session = self.a2d_session
         chars = session.characters
 
         parts = ["你是一个双人对话生成器。根据以下角色设定生成自然对话。"]
 
-        # Per-character info + knowledge
+        # ── Character personas + knowledge ─────────────────
         for key, cfg in chars.items():
             parts.append(f"\n## {cfg.character_folder}（speaker_id: {key}）")
             knowledge = self._a2d_load_knowledge(key, cfg.character_folder)
             if knowledge:
                 parts.append(knowledge)
 
-        # Scene
+        # ── Scene ──────────────────────────────────────────
         if scene_suffix:
             parts.append(f"\n{scene_suffix}")
 
-        # Language instructions — derived from config, not hardcoded
+        # ── LingChat format conventions ────────────────────
+        # These match what LingChat's sys_prompt_builder teaches LLM,
+        # so 【】, <>, （） parsing by StreamProducer works correctly.
+        parts.append("""
+## 上下文格式
+大括号{}包裹的内容是系统给你的感知信息，比如：
+{旁白: 环境描述或开场信息}
+{系统提醒: 时间信息}
+这些是上下文提示，你需要根据它们自然对话，无需逐条回应。
+
+## 发言格式
+你对每句话的回应要符合格式：【情绪】显示文本<TTS朗读文本>（动作描述）
+- 【情绪】内为情绪标签，从以下选择：高兴、兴奋、生气、厌恶、无语、疑惑、慌张、担心、紧张、害怕、害羞、认真、调皮、尴尬、难为情、惊讶、心动、哭泣、自信、无奈
+- <TTS朗读文本> 尖括号内为语音合成朗读文本，可省略
+- （动作描述）圆括号内为动作描述，可省略
+- 不使用颜文字，每句话保持完整断句""")
+
+        # ── A2D dual-character rules ───────────────────────
         lang_lines = []
         for key, cfg in chars.items():
             lang_lines.append(
@@ -591,7 +608,6 @@ class AIService:
             )
         lang_info = "\n".join(lang_lines)
 
-        # Determine whether dual-language mode is needed for any character
         dual_lang_chars = [
             key for key, cfg in chars.items()
             if cfg.display_language != cfg.voice_language
@@ -607,10 +623,13 @@ class AIService:
             tts_instruction = "可省略<TTS文本>（显示语言与TTS语言相同）。"
 
         parts.append(f"""
-## 输出格式
-每句话前标注说话者，然后使用标准格式：
+## 双人对话输出格式
+每句话前标注说话者，然后使用标准格式发言：
 
 {{"speaker":"ema"}}
+【情绪】显示文本<TTS朗读文本>（动作描述）
+
+{{"speaker":"hiro"}}
 【情绪】显示文本<TTS朗读文本>（动作描述）
 
 规则：
