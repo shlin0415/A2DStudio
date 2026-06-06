@@ -100,14 +100,8 @@ class WebSocketManager:
                     logger.info(f"成就 {achievement_id} 解锁失败或已解锁，不发送通知")
             else:
                 logger.warning("收到没有ID的成就解锁请求")
-        elif message_type == "a2d.start":
-            await self._handle_a2d_start(client_id, message)
-        elif message_type == "a2d.continue":
-            await self._handle_a2d_continue(client_id, message)
-        elif message_type == "a2d.retry":
-            await self._handle_a2d_retry(client_id, message)
-        elif message_type == "a2d.regenerate_tts":
-            await self._handle_a2d_regenerate_tts(client_id, message)
+        elif message_type in ("a2d.start", "a2d.continue", "a2d.retry", "a2d.regenerate_tts"):
+            await self._handle_a2d_message(client_id, message_type, message)
         else:
             logger.warning(f"未知消息类型: {message_type}")
 
@@ -211,224 +205,32 @@ class WebSocketManager:
             for client_id in self.active_connections:
                 await self.send_to_client(client_id, message)
 
-    # ── A2D Script Editor Handlers ───────────────────────────────
+    # ── A2D Script Editor Handler (dispatch to a2d_message_handler) ─
 
-    async def _handle_a2d_start(self, client_id: str, message: dict):
-        """Handle A2D script-editor start message."""
-        payload = message.get("payload", {})
-        topic = payload.get("topic")
+    async def _handle_a2d_message(
+        self, client_id: str, msg_type: str, message: dict
+    ):
+        """Route A2D WS messages to the standalone message dispatcher."""
+        from ling_chat.core.a2d_message_handler import dispatch
 
         ai_service = service_manager.get_ai_service()
-        session = ai_service.a2d_session
+        payload = message.get("payload", {})
 
-        # Populate character configs if not already set
-        if not session.characters:
-            session.characters = _a2d_build_character_configs(ai_service)
+        async def send(msg: dict):
+            await self.send_to_client(client_id, msg)
 
-        session.mode = "script"
-        session.paused = False
-        session.batch_size = 1
-
-        if topic:
-            session.update_scene(topic, "自由对话", None)
-
-        await self.send_to_client(client_id, {
-            "type": "status",
-            "payload": {"phase": "thinking"},
-        })
-
-        try:
-            # Step 1: Generate text (LLM decides speaker)
-            result = await ai_service.a2d_generate_next(
-                scene_suffix=session.build_scene_prompt_suffix(),
-            )
-            if result:
-                await self.send_to_client(client_id, result)
-
-            # Step 2: Synthesize TTS (separate call)
-            if result and result.get("payload"):
-                await self.send_to_client(client_id, {
-                    "type": "status",
-                    "payload": {"phase": "synthesizing"},
-                })
-                pl = result["payload"]
-                try:
-                    audio_path = await ai_service.a2d_synthesize(
-                        pl["id"], pl["tts_text"]
-                    )
-                    await self.send_to_client(client_id, {
-                        "type": "tts_ready",
-                        "payload": {"id": pl["id"], "audio_path": audio_path},
-                    })
-                except Exception as tts_e:
-                    logger.warning(f"A2D TTS failed (non-fatal): {tts_e}")
-
-            await self.send_to_client(client_id, {
-                "type": "status",
-                "payload": {"phase": "paused"},
-            })
-        except Exception as e:
-            logger.error(f"A2D start failed: {e}")
+        handled = await dispatch(msg_type, ai_service, client_id, payload, send)
+        if not handled:
+            logger.warning(f"A2D: no handler for message type '{msg_type}'")
             await self.send_to_client(client_id, {
                 "type": "error",
                 "payload": {
                     "error_type": "unknown",
-                    "message": str(e),
-                    "detail": traceback.format_exc(),
+                    "message": f"Unknown A2D message type: {msg_type}",
+                    "detail": "",
                     "generation_id": "",
                     "retry_count": 0,
-                    "max_retries": 3,
-                },
-            })
-
-    async def _handle_a2d_continue(self, client_id: str, message: dict):
-        """Handle A2D continue — apply edits and generate next line."""
-        payload = message.get("payload", {})
-        generation_id = payload.get("generation_id", "")
-
-        ai_service = service_manager.get_ai_service()
-        session = ai_service.a2d_session
-
-        edits = payload.get("edits")
-        await session.handle_continue(generation_id, edits)
-
-        await self.send_to_client(client_id, {
-            "type": "status",
-            "payload": {"phase": "thinking"},
-        })
-
-        try:
-            result = await ai_service.a2d_generate_next(scene_suffix=None)
-            if result:
-                await self.send_to_client(client_id, result)
-
-            # TTS
-            if result and result.get("payload"):
-                await self.send_to_client(client_id, {
-                    "type": "status",
-                    "payload": {"phase": "synthesizing"},
-                })
-                pl = result["payload"]
-                try:
-                    audio_path = await ai_service.a2d_synthesize(
-                        pl["id"], pl["tts_text"]
-                    )
-                    await self.send_to_client(client_id, {
-                        "type": "tts_ready",
-                        "payload": {"id": pl["id"], "audio_path": audio_path},
-                    })
-                except Exception as tts_e:
-                    logger.warning(f"A2D TTS failed (non-fatal): {tts_e}")
-
-            await self.send_to_client(client_id, {
-                "type": "status",
-                "payload": {"phase": "paused"},
-            })
-        except Exception as e:
-            logger.error(f"A2D continue failed: {e}")
-            await self.send_to_client(client_id, {
-                "type": "error",
-                "payload": {
-                    "error_type": "unknown",
-                    "message": str(e),
-                    "detail": traceback.format_exc(),
-                    "generation_id": generation_id,
-                    "retry_count": 0,
-                    "max_retries": 3,
-                },
-            })
-
-    async def _handle_a2d_retry(self, client_id: str, message: dict):
-        """Handle retry — regenerate last line after error."""
-        payload = message.get("payload", {})
-        generation_id = payload.get("generation_id", "")
-
-        ai_service = service_manager.get_ai_service()
-        session = ai_service.a2d_session
-
-        # Remove the failed last line
-        if session.script_lines:
-            session.script_lines.pop()
-
-        await self.send_to_client(client_id, {
-            "type": "status",
-            "payload": {"phase": "thinking"},
-        })
-
-        try:
-            result = await ai_service.a2d_generate_next(scene_suffix=None)
-            if result:
-                await self.send_to_client(client_id, result)
-
-            if result and result.get("payload"):
-                await self.send_to_client(client_id, {
-                    "type": "status",
-                    "payload": {"phase": "synthesizing"},
-                })
-                pl = result["payload"]
-                try:
-                    audio_path = await ai_service.a2d_synthesize(
-                        pl["id"], pl["tts_text"]
-                    )
-                    await self.send_to_client(client_id, {
-                        "type": "tts_ready",
-                        "payload": {"id": pl["id"], "audio_path": audio_path},
-                    })
-                except Exception as tts_e:
-                    logger.warning(f"A2D TTS failed (non-fatal): {tts_e}")
-
-            await self.send_to_client(client_id, {
-                "type": "status",
-                "payload": {"phase": "paused"},
-            })
-        except Exception as e:
-            logger.error(f"A2D retry failed: {e}")
-            await self.send_to_client(client_id, {
-                "type": "error",
-                "payload": {
-                    "error_type": "unknown",
-                    "message": str(e),
-                    "detail": traceback.format_exc(),
-                    "generation_id": generation_id,
-                    "retry_count": 0,
-                    "max_retries": 3,
-                },
-            })
-
-    async def _handle_a2d_regenerate_tts(self, client_id: str, message: dict):
-        """Handle TTS regeneration for an existing script line."""
-        payload = message.get("payload", {})
-        line_id = payload.get("id", "")
-        text = payload.get("text", "")
-
-        ai_service = service_manager.get_ai_service()
-
-        await self.send_to_client(client_id, {
-            "type": "status",
-            "payload": {"phase": "synthesizing"},
-        })
-
-        try:
-            audio_path = await ai_service.a2d_synthesize(line_id, text)
-            await self.send_to_client(client_id, {
-                "type": "tts_ready",
-                "payload": {"id": line_id, "audio_path": audio_path},
-            })
-            await self.send_to_client(client_id, {
-                "type": "status",
-                "payload": {"phase": "paused"},
-            })
-        except Exception as e:
-            logger.error(f"A2D TTS regenerate failed: {e}")
-            await self.send_to_client(client_id, {
-                "type": "error",
-                "payload": {
-                    "error_type": "tts_error",
-                    "message": f"TTS synthesis failed: {e}",
-                    "detail": traceback.format_exc(),
-                    "generation_id": "",
-                    "retry_count": 0,
-                    "max_retries": 1,
+                    "max_retries": 0,
                 },
             })
 
