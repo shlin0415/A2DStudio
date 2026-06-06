@@ -166,12 +166,14 @@ class ScriptFunction:
     def evaluate(expr: str, variables: dict) -> bool:
         """
         对表达式 expr 求值，返回布尔值。
-        使用安全的 eval 包装，只允许访问 variables 中的变量。
+
+        .. deprecated::
+            使用 evaluate_safe() 代替。此方法使用 eval() 存在安全隐患。
+            保留仅用于兼容已有剧本的复杂条件表达式。
         """
         if not expr:
             return True
 
-        # 构建安全的全局和局部命名空间
         safe_globals = {
             "__builtins__": {},  # 禁用所有内置函数
             "True": True,
@@ -192,6 +194,82 @@ class ScriptFunction:
         except Exception as e:
             logger.error(f"表达式求值出错: {expr} - {e}")
             return False
+
+    @staticmethod
+    def evaluate_safe(expr: str, variables: dict) -> bool:
+        """
+        安全地对条件表达式求值，不使用 eval()。
+
+        支持的语法（对齐 Rust 版 evaluate_condition）：
+        - 空表达式 → True
+        - "var" 单独 → 变量存在且非空/非 False 即为 True
+        - "var == value" → 相等判断
+        - "var != value" → 不等判断
+
+        value 支持：true, false, null, 数字, 带引号字符串
+        """
+        expr = expr.strip()
+        if not expr:
+            return True
+
+        # Try != first (longer operator)
+        for op, fn in [("!=", lambda a, b: a != b), ("==", lambda a, b: a == b)]:
+            if op in expr:
+                parts = expr.split(op, 1)
+                if len(parts) == 2:
+                    var_name = parts[0].strip()
+                    raw_val = parts[1].strip()
+                    current = variables.get(var_name)
+                    expected = ScriptFunction._parse_literal(raw_val)
+                    return fn(
+                        ScriptFunction._normalize(current),
+                        ScriptFunction._normalize(expected),
+                    )
+
+        # Bare variable: truthiness check
+        val = variables.get(expr)
+        if val is None:
+            return False
+        if isinstance(val, bool):
+            return val
+        return True  # non-null, non-bool → truthy
+
+    @staticmethod
+    def _parse_literal(s: str):
+        """Parse a literal value from a condition expression."""
+        s_lower = s.lower()
+        if s_lower == "true":
+            return True
+        if s_lower == "false":
+            return False
+        if s_lower == "null" or s_lower == "none":
+            return None
+        # Quoted string
+        if (s.startswith('"') and s.endswith('"')) or (
+            s.startswith("'") and s.endswith("'")
+        ):
+            return s[1:-1]
+        # Number
+        try:
+            return int(s)
+        except ValueError:
+            pass
+        try:
+            return float(s)
+        except ValueError:
+            pass
+        return s
+
+    @staticmethod
+    def _normalize(val):
+        """Normalize values for comparison: bool→int, None→empty string."""
+        if val is None:
+            return ""
+        if isinstance(val, bool):
+            return 1 if val else 0
+        if isinstance(val, (int, float)):
+            return val
+        return str(val)
 
     @staticmethod
     def memory_builder(game_context, memory, character: str, prompt: str = ""):
