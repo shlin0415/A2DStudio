@@ -433,36 +433,60 @@ class WebSocketManager:
             })
 
 def _a2d_build_character_configs(ai_service) -> dict:
-    """Build CharacterConfig dict from LingChat AIService character settings.
+    """Build CharacterConfig dict by scanning all character directories.
 
-    Reads from settings.yml fields: script_role_key, character_folder, voice_language.
-    Falls back to sensible defaults if fields are not set.
+    Scans game_data/characters/ for all subdirectories containing settings.yml,
+    loads each character's configuration, and builds a CharacterConfig keyed by
+    script_role_key.
+
+    This replaces the old approach of reading only ai_service.settings (single
+    character), enabling dual-character A2D sessions.
     """
     from ling_chat.core.session_runtime import CharacterConfig
+    from ling_chat.utils.function import Function
+    from ling_chat.utils.runtime_path import user_data_path
 
-    settings = getattr(ai_service, 'settings', None)
     configs = {}
+    characters_dir = user_data_path / "game_data" / "characters"
 
-    if settings:
-        role_key = getattr(settings, 'script_role_key', None) or "ema"
-        folder = getattr(settings, 'character_folder', None) or "Unknown"
-        voice_lang = getattr(settings, 'voice_language', None) or "ja"
-        # display_language: if LLM_OUTPUT_SEC_LANG is enabled, it's zh with ja TTS
-        display_lang = "zh"  # LingChat default display language
-        gsv_api_url = getattr(settings, 'gsv_api_url', None)
+    if not characters_dir.exists():
+        logger.warning(f"A2D: characters dir not found: {characters_dir}")
+        return configs
+
+    for char_dir in sorted(characters_dir.iterdir()):
+        if not char_dir.is_dir():
+            continue
+        if not (char_dir / "settings.yml").exists():
+            continue
+
+        try:
+            settings = Function.load_character_settings(char_dir)
+        except Exception as e:
+            logger.warning(
+                f"A2D: failed to load settings for '{char_dir.name}': {e}"
+            )
+            continue
+
+        role_key = getattr(settings, 'script_role_key', None) or char_dir.name
+        folder = char_dir.name
+        voice_lang = getattr(
+            getattr(settings, 'voice_models', None), 'voice_language', None
+        ) or "ja"
 
         configs[role_key] = CharacterConfig(
             script_role_key=role_key,
             character_folder=folder,
             voice_language=voice_lang,
-            display_language=display_lang,
+            display_language="zh",
         )
 
+    if configs:
         logger.info(
-            f"A2D character configs built: {len(configs)} characters"
+            f"A2D character configs built: {len(configs)} characters: "
+            f"{list(configs.keys())}"
         )
     else:
-        logger.error("A2D: no character settings found in AIService")
+        logger.warning("A2D: no characters found in game_data/characters/")
 
     return configs
 
