@@ -67,8 +67,9 @@ async def _generate_and_synthesize(ai_service, send: SendFn) -> str | None:
         if pl:
             await send({"type": "status", "payload": {"phase": "synthesizing"}})
             try:
+                speaker = pl.get("speaker", "")
                 audio_path = await ai_service.a2d_synthesize(
-                    pl["id"], pl["tts_text"]
+                    pl["id"], pl["tts_text"], speaker=speaker
                 )
                 await send({
                     "type": "tts_ready",
@@ -148,7 +149,15 @@ async def _handle_regenerate_tts(ai_service, client_id: str, payload: dict, send
     await send({"type": "status", "payload": {"phase": "synthesizing"}})
 
     try:
-        audio_path = await ai_service.a2d_synthesize(line_id, text)
+        # Look up speaker from script_lines
+        speaker = ""
+        session = ai_service.a2d_session
+        for line in session.script_lines:
+            if line.id == line_id:
+                speaker = line.speaker
+                break
+
+        audio_path = await ai_service.a2d_synthesize(line_id, text, speaker=speaker)
         await send({
             "type": "tts_ready",
             "payload": {"id": line_id, "audio_path": audio_path},

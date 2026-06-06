@@ -2,7 +2,7 @@
 import asyncio
 import uuid
 from dataclasses import dataclass, field
-from typing import Optional
+from typing import Any, Optional
 
 from ling_chat.core.logger import logger
 from ling_chat.schemas.script_overlay import SceneConfig, ScriptLine
@@ -16,6 +16,7 @@ class CharacterConfig:
     voice_language: str = "ja"    # TTS 语音语言 (ja/zh/en)，来自 settings.yml voice_language
     display_language: str = "zh"  # 前端显示文本语言 (ja/zh/en)
     tts_type: str = "gsv"
+    game_role: Any = None         # Optional[GameRole] — lazy-init for TTS reuse
 
 
 @dataclass

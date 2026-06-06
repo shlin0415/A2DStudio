@@ -574,6 +574,14 @@ class AIService:
         # ── Character personas + knowledge ─────────────────
         for key, cfg in chars.items():
             parts.append(f"\n## {cfg.character_folder}（speaker_id: {key}）")
+            # Prefer GameRole.settings.system_prompt, fall back to file loading
+            persona = None
+            if cfg.game_role and cfg.game_role.settings.system_prompt:
+                persona = f"角色人设：{cfg.game_role.settings.system_prompt}"
+            else:
+                persona = self._a2d_load_persona(cfg.character_folder)
+            if persona:
+                parts.append(persona)
             knowledge = self._a2d_load_knowledge(key, cfg.character_folder)
             if knowledge:
                 parts.append(knowledge)
@@ -644,6 +652,23 @@ class AIService:
 {lang_info}
 """)
         return "\n".join(parts)
+
+    def _a2d_load_persona(self, folder_name: str) -> str | None:
+        """Load character system_prompt from settings.yml."""
+        from pathlib import Path
+        from ling_chat.utils.function import Function
+        from ling_chat.utils.runtime_path import user_data_path
+
+        char_dir = user_data_path / "game_data" / "characters" / folder_name
+        if not char_dir.exists():
+            return None
+        try:
+            settings = Function.load_character_settings(char_dir)
+            if settings.system_prompt:
+                return f"角色人设：{settings.system_prompt}"
+        except Exception as e:
+            logger.warning(f"A2D: failed to load persona for {folder_name}: {e}")
+        return None
 
     def _a2d_load_knowledge(self, speaker_id: str, folder_name: str) -> str | None:
         """Load character knowledge from knowledge/ directory."""
@@ -775,10 +800,31 @@ class AIService:
             state="approved",
         )
 
-    async def a2d_synthesize(self, line_id: str, text: str) -> str:
-        """Synthesize TTS for a script line. Returns audio file path."""
+    async def a2d_synthesize(self, line_id: str, text: str, speaker: str = "") -> str:
+        """Synthesize TTS for a script line. Returns audio file path.
+
+        Tries GameRole.voice_maker first (LingChat native path), falls back
+        to the AIService-level tts_provider.
+        """
         import os
 
+        # ── Path 1: GameRole.voice_maker (per-character, preferred) ─
+        cfg = self.a2d_session.characters.get(speaker) if speaker else None
+        if cfg and cfg.game_role:
+            voice_maker = cfg.game_role.voice_maker
+            # Ensure GSV adapter is ready
+            if voice_maker.tts_provider.gsv_adapter:
+                output_path = os.path.join(
+                    str(voice_maker.tts_provider.temp_dir),
+                    f"a2d_{line_id}.wav",
+                )
+                audio_data = await voice_maker.tts_provider.gsv_adapter.generate_voice(text)
+                os.makedirs(os.path.dirname(output_path), exist_ok=True)
+                with open(output_path, "wb") as f:
+                    f.write(audio_data)
+                return output_path
+
+        # ── Path 2: AIService-level tts_provider (fallback) ─
         if not hasattr(self, 'tts_provider') or not self.tts_provider:
             raise RuntimeError("TTS provider not initialized")
         if not self.tts_provider.gsv_adapter:

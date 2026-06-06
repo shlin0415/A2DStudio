@@ -275,11 +275,27 @@ def _a2d_build_character_configs(ai_service) -> dict:
             getattr(settings, 'voice_models', None), 'voice_language', None
         ) or "ja"
 
+        # Try to create a GameRole for TTS reuse (non-fatal if it fails)
+        game_role = None
+        try:
+            from ling_chat.core.ai_service.type import GameRole
+            game_role = GameRole(
+                settings=settings,
+                resource_path=str(char_dir),
+                display_name=getattr(settings, 'ai_name', None) or folder,
+            )
+        except Exception as e:
+            logger.warning(
+                f"A2D: GameRole init failed for '{role_key}' "
+                f"(TTS may not be available): {e}"
+            )
+
         configs[role_key] = CharacterConfig(
             script_role_key=role_key,
             character_folder=folder,
             voice_language=voice_lang,
             display_language="zh",
+            game_role=game_role,
         )
 
     if configs:
