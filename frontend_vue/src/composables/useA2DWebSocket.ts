@@ -1,6 +1,8 @@
 import { onMounted, onUnmounted } from 'vue'
 import { useScriptStore } from '@/stores/modules/script'
+import { useGameStore } from '@/stores/modules/game'
 import type { ScriptLine, ErrorInfo, Phase } from '@/stores/modules/script'
+import type { GameRole } from '@/stores/modules/game/state'
 
 // ── Singleton: shared WS across all components ─────────
 let ws: WebSocket | null = null
@@ -25,6 +27,40 @@ export function useA2DWebSocket() {
         case 'connection_established':
           store.generationId = msg.payload?.client_id || null
           break
+        case 'a2d.characters': {
+          const gameStore = useGameStore()
+          const chars = msg.payload?.characters as Record<string, unknown>[]
+          if (chars && chars.length > 0) {
+            gameStore.presentRoleIds = []
+            for (const c of chars) {
+              const roleId = c.roleId as number
+              // Only create if not already present (idempotent on restart)
+              if (!gameStore.gameRoles[roleId]) {
+                gameStore.gameRoles[roleId] = {
+                  roleId,
+                  roleName: (c.roleName as string) || '',
+                  roleSubTitle: (c.roleSubTitle as string) || '',
+                  thinkMessage: (c.thinkMessage as string) || '正在思考中...',
+                  emotion: '正常',
+                  originalEmotion: '正常',
+                  scale: (c.scale as number) || 1.0,
+                  offsetX: (c.offsetX as number) || 0,
+                  offsetY: (c.offsetY as number) || 0,
+                  bubbleTop: (c.bubbleTop as number) || 5,
+                  bubbleLeft: (c.bubbleLeft as number) || 20,
+                  show: true,
+                  clothes: {},
+                  clothesName: 'default',
+                  bodyPart: {},
+                  character_folder: (c.character_folder as string) || '',
+                } as GameRole
+              }
+              gameStore.presentRoleIds.push(roleId)
+            }
+            console.log('[A2D] characters loaded:', gameStore.presentRoleIds)
+          }
+          break
+        }
         case 'status': {
           const phase = (msg.payload?.phase || 'idle') as Phase
           store.setPhase(phase)

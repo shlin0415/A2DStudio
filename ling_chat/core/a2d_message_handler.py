@@ -39,6 +39,51 @@ def get_handler(msg_type: str):
 # ── Shared helpers ────────────────────────────────────────
 
 
+async def _send_a2d_characters(session, send: SendFn) -> list[dict]:
+    """Scan all A2D characters, look up their DB role_ids, and send them to the frontend.
+
+    Returns the list of character dicts that were sent (for reuse by caller).
+    """
+    from ling_chat.game_database.managers.role_manager import RoleManager
+
+    characters: list[dict] = []
+
+    for role_key, cfg in session.characters.items():
+        folder = cfg.character_folder
+
+        # Look up the role in the DB (synced on startup from game_data/characters/)
+        db_role = RoleManager.get_main_role_by_resource_folder(folder)
+        if db_role is None:
+            logger.warning(
+                f"A2D: no DB role found for '{role_key}' (folder={folder}) — "
+                f"character will not appear on stage"
+            )
+            continue
+
+        # Read defaults from settings if GameRole is available
+        s = cfg.game_role.settings if cfg.game_role else None
+
+        characters.append({
+            "roleId": db_role.id,
+            "roleName": getattr(s, "ai_name", None) or folder,
+            "roleSubTitle": getattr(s, "ai_subtitle", None) or "",
+            "thinkMessage": getattr(s, "thinking_message", None) or "正在思考中...",
+            "scale": getattr(s, "scale", None) or 1.0,
+            "offsetX": getattr(s, "offset_x", None) or 0.0,
+            "offsetY": getattr(s, "offset_y", None) or 0.0,
+            "bubbleTop": getattr(s, "bubble_top", None) or 5,
+            "bubbleLeft": getattr(s, "bubble_left", None) or 20,
+            "character_folder": folder,
+            "script_role_key": role_key,
+        })
+
+    if characters:
+        await send({"type": "a2d.characters", "payload": {"characters": characters}})
+        logger.info(f"A2D: sent {len(characters)} characters to frontend")
+
+    return characters
+
+
 async def _generate_and_synthesize(ai_service, send: SendFn) -> str | None:
     """Generate one script line + synthesize TTS. Returns generation_id or None.
 
@@ -117,6 +162,9 @@ async def _handle_start(ai_service, client_id: str, payload: dict, send: SendFn)
     topic = payload.get("topic")
     if topic:
         session.update_scene(topic, "自由对话", None)
+
+    # Send character list first so frontend renders sprites before first line
+    await _send_a2d_characters(session, send)
 
     await _generate_and_synthesize(ai_service, send)
 
