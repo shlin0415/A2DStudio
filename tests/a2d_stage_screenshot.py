@@ -8,12 +8,19 @@ Usage:
 import asyncio
 import json
 import os
+from pathlib import Path
+
 import websockets
 from playwright.sync_api import sync_playwright
 
+_PROJECT_ROOT = Path(__file__).resolve().parent.parent
+
 STAGE_URL = "http://localhost:5173/stage"
-SCREENSHOT_DIR = "tmp"
+SCREENSHOT_DIR = str(_PROJECT_ROOT / "tmp")
 WS_URL = "ws://localhost:8765/ws"
+
+# A2D_E2E_HEADLESS=1 → 无头模式 ; unset → 可视化 (默认)
+_HEADED = os.environ.get("A2D_E2E_HEADLESS", "").strip() not in ("1", "true", "yes")
 
 
 async def check_ws_characters():
@@ -60,7 +67,7 @@ def main():
     # ── Step 2: Screenshot the stage page ───────────────────
     print("[2] Taking screenshots of stage page...")
     with sync_playwright() as p:
-        browser = p.chromium.launch(headless=False)
+        browser = p.chromium.launch(headless=not _HEADED)
         page = browser.new_page(viewport={"width": 1280, "height": 720})
 
         # Collect console messages

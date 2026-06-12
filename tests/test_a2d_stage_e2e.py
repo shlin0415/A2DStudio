@@ -20,6 +20,10 @@ import websockets
 _PROJECT_ROOT = Path(__file__).resolve().parent.parent
 _SCREENSHOT_DIR = _PROJECT_ROOT / "tmp"
 
+# A2D_E2E_HEADLESS=1 → 无头模式 (CI)
+# unset or 0       → 可视化 (默认，Windows 友好)
+_HEADED = os.environ.get("A2D_E2E_HEADLESS", "").strip() not in ("1", "true", "yes")
+
 # Load .env so A2D_STAGE_CHARACTERS is visible to tests
 try:
     from ling_chat.utils.load_env import load_env
@@ -148,7 +152,7 @@ def test_stage_page_loads_and_ws_connects():
     from playwright.sync_api import sync_playwright
 
     with sync_playwright() as p:
-        b = p.chromium.launch(headless=True)
+        b = p.chromium.launch(headless=not _HEADED)
         page = b.new_page(viewport={"width": 1280, "height": 720})
 
         console_msgs = []
@@ -171,7 +175,7 @@ def test_stage_renders_characters_after_start():
     from playwright.sync_api import sync_playwright
 
     with sync_playwright() as p:
-        b = p.chromium.launch(headless=True)
+        b = p.chromium.launch(headless=not _HEADED)
         page = b.new_page(viewport={"width": 1280, "height": 720})
 
         console_msgs = []
