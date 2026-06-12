@@ -49,6 +49,7 @@ dev = [
     "pytest>=7.0",
     "pytest-asyncio>=0.21.0",
     "pytest-cov>=6.2.1",
+    "playwright>=1.60.0",
 ]
 
 [[tool.uv.index]]

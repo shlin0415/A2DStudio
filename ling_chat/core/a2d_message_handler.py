@@ -42,13 +42,28 @@ def get_handler(msg_type: str):
 async def _send_a2d_characters(session, send: SendFn) -> list[dict]:
     """Scan all A2D characters, look up their DB role_ids, and send them to the frontend.
 
+    Respects the A2D_STAGE_CHARACTERS .env var when set — only those script_role_keys
+    are sent.  When empty or unset, all registered characters are sent.
+
     Returns the list of character dicts that were sent (for reuse by caller).
     """
+    import os
     from ling_chat.game_database.managers.role_manager import RoleManager
+
+    # ── Filter: which characters to show on stage ──────────
+    stage_cfg = os.environ.get("A2D_STAGE_CHARACTERS", "")
+    allowed_keys: set[str] | None = None
+    if stage_cfg.strip():
+        allowed_keys = {k.strip() for k in stage_cfg.split(",") if k.strip()}
+        logger.info(f"A2D: stage characters filter active: {allowed_keys}")
 
     characters: list[dict] = []
 
     for role_key, cfg in session.characters.items():
+        # Skip characters not in the stage whitelist (when configured)
+        if allowed_keys is not None and role_key not in allowed_keys:
+            continue
+
         folder = cfg.character_folder
 
         # Look up the role in the DB (synced on startup from game_data/characters/)
