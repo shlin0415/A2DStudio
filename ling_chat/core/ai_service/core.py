@@ -631,29 +631,29 @@ class AIService:
         else:
             tts_instruction = "可省略<TTS文本>（显示语言与TTS语言相同）。"
 
-        parts.append(f"""
-## 发言输出格式
-每次只生成一句对话。根据对话上下文，选择一个合适的角色发言。
-先标注说话者，然后使用标准格式：
-
-{{"speaker":"ema"}}
-【情绪】显示文本<TTS朗读文本>（动作描述）
-
-规则：
-- 每次只生成一句对话（一次只输出一个 speaker 标记和一个发言）
-- speaker 使用上面定义的 speaker_id
-- 【情绪】方括号内为情绪标签
-- <TTS朗读文本> 尖括号内为TTS朗读文本，{tts_instruction}
-- （动作描述）必须放在句末，不要插在句子中间
-- 根据对话流向选择最合适的发言者，用自然的对话节奏，不需要严格交替"""
+        prompt_lines = []
+        prompt_lines.append("## 发言输出格式")
+        prompt_lines.append("每次只生成一句对话。根据对话上下文，选择一个合适的角色发言。")
+        prompt_lines.append("先标注说话者，然后使用标准格式：")
+        prompt_lines.append("")
+        prompt_lines.append('{"speaker":"ema"}')
+        prompt_lines.append("【情绪】显示文本<TTS朗读文本>（动作描述）")
+        prompt_lines.append("")
+        prompt_lines.append("规则：")
+        prompt_lines.append("- 每次只生成一句对话（一次只输出一个 speaker 标记和一个发言）")
+        prompt_lines.append("- speaker 使用上面定义的 speaker_id")
+        prompt_lines.append("- 【情绪】方括号内为情绪标签")
+        prompt_lines.append(f"- <TTS朗读文本> 尖括号内为TTS朗读文本，{tts_instruction}")
+        prompt_lines.append("- （动作描述）必须放在句末，不要插在句子中间")
+        prompt_lines.append("- 根据对话流向选择最合适的发言者，用自然的对话节奏，不需要严格交替")
         char_names = [cfg.character_folder for cfg in chars.values()]
         if len(char_names) > 1:
-            parts.append(f"- 交替让角色发言，不要连续让同一个角色说话")
-        parts.append(f"- 如果对话应该继续，选择下一个角色；如果自然结束，可以给出简短的结束语")
-        parts.append(f"""
-## 角色语言设定
-{lang_info}
-""")
+            prompt_lines.append("- 交替让角色发言，不要连续让同一个角色说话")
+        prompt_lines.append("- 如果对话应该继续，选择下一个角色；如果自然结束，可以给出简短的结束语")
+        prompt_lines.append("")
+        prompt_lines.append("## 角色语言设定")
+        prompt_lines.append(lang_info)
+        parts.append("\n".join(prompt_lines))
         return "\n".join(parts)
 
     def _a2d_load_persona(self, folder_name: str) -> str | None:
