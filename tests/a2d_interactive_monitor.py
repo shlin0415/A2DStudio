@@ -75,11 +75,9 @@ def main():
         # Poll store state every 3s while browser is open
         try:
             while True:
-                page.wait_for_timeout(3000)
-
-                # Check if page is still connected
                 try:
-                    _ = page.title()
+                    page.wait_for_timeout(3000)
+                    _ = page.title()  # will throw if page closed
                 except Exception:
                     print("\n[monitor] Browser closed — saving logs...")
                     break
