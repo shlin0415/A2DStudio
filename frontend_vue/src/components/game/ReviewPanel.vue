@@ -25,6 +25,7 @@
           v-model="editingText"
           class="text-editor"
           rows="2"
+          @input="onTextEdited"
         ></textarea>
       </div>
       <div class="action-row">
@@ -81,10 +82,26 @@ const store = useScriptStore()
 const { sendStart, sendContinue, sendRetry, sendRegenerateTTS } = useA2DWebSocket()
 
 const editingText = ref('')
+let lastLineId = ''
+let userEdited = false
 
 watch(() => store.currentLine, (line) => {
-  if (line) editingText.value = line.display_text
+  if (!line) return
+  // New line arrived (different id): reset editing text + dirty flag
+  if (line.id !== lastLineId) {
+    lastLineId = line.id
+    editingText.value = line.display_text
+    userEdited = false
+  }
+  // Same line, user hasn't edited: update from store (e.g., first load)
+  else if (!userEdited) {
+    editingText.value = line.display_text
+  }
 })
+
+function onTextEdited() {
+  userEdited = true
+}
 
 const currentSpeakerName = computed(() => {
   const lastLine = store.lines[store.lines.length - 1]
