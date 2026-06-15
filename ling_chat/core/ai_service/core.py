@@ -631,14 +631,21 @@ class AIService:
             tts_instruction = "可省略<TTS文本>（显示语言与TTS语言相同）。"
 
         parts.append(f"""
-## 双人对话输出格式
-每句话前标注说话者，然后使用标准格式发言：
+## 发言输出格式
+每次只生成一句对话。根据对话上下文，选择一个合适的角色发言。
+先标注说话者，然后使用标准格式：
 
 {{"speaker":"ema"}}
 【情绪】显示文本<TTS朗读文本>（动作描述）
 
-{{"speaker":"hiro"}}
-【情绪】显示文本<TTS朗读文本>（动作描述）
+规则：
+- 每次只生成一句对话（一次只输出一个 speaker 标记和一个发言）
+- 根据对话流向选择最合适的发言者"""
+        # 追加角色选择提示
+        char_names = [cfg.character_folder for cfg in chars.values()]
+        if len(char_names) > 1:
+            parts.append(f"- 交替让角色发言，不要连续让同一个角色说话")
+        parts.append(f"- 如果对话应该继续，选择下一个角色；如果自然结束，可以给出简短的结束语")
 
 规则：
 - speaker 使用上面定义的 speaker_id
