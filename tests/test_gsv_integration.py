@@ -38,7 +38,7 @@ EMA_CONFIG = {
     "top_k": 10,
     "top_p": 0.9,
     "temperature": 0.8,
-    "parallel_infer": True,   # v2 模型在正确参数下并行推理正常
+    # parallel_infer 不再传递 — origin 脚本不传，GSV 用内部默认
 }
 
 HIRO_CONFIG = {
@@ -53,7 +53,7 @@ HIRO_CONFIG = {
     "top_k": 15,
     "top_p": 1.0,
     "temperature": 1.0,
-    "parallel_infer": True,  # 与 origin 脚本一致
+    # parallel_infer 不再传递 — origin 脚本不传，GSV 用内部默认
 }
 
 
@@ -125,7 +125,6 @@ def _make_adapter(config: dict) -> GPTSoVITSAdapter:
         top_k=config["top_k"],
         top_p=config["top_p"],
         temperature=config["temperature"],
-        parallel_infer=config.get("parallel_infer", False),
     )
 
 
@@ -324,7 +323,7 @@ def test_ema_adapter_params(ema_adapter):
     assert p["top_k"] == 10
     assert p["top_p"] == 0.9
     assert p["temperature"] == 0.8
-    assert p["parallel_infer"] is True   # v2 模型在正确参数下用并行推理
+    assert "parallel_infer" not in p  # 不再传 parallel_infer（对齐 origin 脚本）
     assert "0101Adv26_Ema012.wav" in str(p["ref_audio_path"])
     # ref_text 完整
     assert "ノアちゃん" in p["prompt_text"]
@@ -338,7 +337,7 @@ def test_hiro_adapter_params(hiro_adapter):
     assert p["top_k"] == 15
     assert p["top_p"] == 1.0
     assert p["temperature"] == 1.0
-    assert p["parallel_infer"] is True
+    assert "parallel_infer" not in p  # 不再传 parallel_infer（对齐 origin 脚本）
     assert "0205Trial09_Hiro093" in str(p["ref_audio_path"])
     assert "博愛" in p["prompt_text"]
 
