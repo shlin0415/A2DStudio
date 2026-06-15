@@ -107,7 +107,7 @@ async def _generate_and_synthesize(ai_service, send: SendFn) -> str | None:
     """
     try:
         # Step 1: Generate text (LLM decides speaker)
-        send({"type": "status", "payload": {"phase": "thinking"}})
+        await send({"type": "status", "payload": {"phase": "thinking"}})
 
         session = ai_service.a2d_session
         result = await ai_service.a2d_generate_next(
