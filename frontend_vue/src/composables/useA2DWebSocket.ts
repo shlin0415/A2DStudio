@@ -13,7 +13,7 @@ export function useA2DWebSocket() {
   const WS_URL = `ws://${window.location.hostname}:8765/ws`
 
   function connect() {
-    if (ws && ws.readyState === WebSocket.OPEN) return
+    if (ws && (ws.readyState === WebSocket.OPEN || ws.readyState === WebSocket.CONNECTING)) return
     ws = new WebSocket(WS_URL)
 
     ws.onopen = () => {

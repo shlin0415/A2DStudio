@@ -1,7 +1,16 @@
 <template>
   <div class="review-panel">
-    <!-- Thinking / Synthesizing -->
-    <div v-if="store.isThinking" class="status-row">
+    <!-- Thinking / Synthesizing — show generated text as read-only preview -->
+    <div v-if="(store.isThinking || store.isSynthesizing) && store.currentLine" class="preview-area">
+      <div class="preview-text">{{ store.currentLine.display_text }}</div>
+      <div class="preview-status">
+        <template v-if="store.isThinking">{{ currentSpeakerName }}正在思考...</template>
+        <template v-else>&#x1F50A; 语音合成中...</template>
+      </div>
+    </div>
+
+    <!-- Thinking / Synthesizing — no text yet -->
+    <div v-else-if="store.isThinking" class="status-row">
       <span class="status-text">{{ currentSpeakerName }}正在思考...</span>
     </div>
     <div v-else-if="store.isSynthesizing" class="status-row">
@@ -132,6 +141,29 @@ function skipTTS() {
   background: rgba(20, 20, 30, 0.95);
   padding: 16px 24px;
   color: #fff;
+}
+
+.preview-area {
+  padding: 8px 0;
+}
+
+.preview-text {
+  background: rgba(255, 255, 255, 0.05);
+  border: 1px solid rgba(255, 255, 255, 0.1);
+  border-radius: 8px;
+  padding: 10px 14px;
+  font-size: 16px;
+  line-height: 1.6;
+  color: #eee;
+  margin-bottom: 8px;
+  white-space: pre-wrap;
+  word-break: break-word;
+}
+
+.preview-status {
+  font-size: 13px;
+  color: rgba(255, 255, 255, 0.45);
+  padding-left: 4px;
 }
 
 .status-row {
