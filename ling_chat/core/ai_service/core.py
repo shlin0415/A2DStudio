@@ -622,11 +622,12 @@ class AIService:
             if cfg.display_language != cfg.voice_language
         ]
 
-        tts_instruction = ""
         if dual_lang_chars:
+            dual_names = [chars[k].character_folder for k in dual_lang_chars]
             tts_instruction = (
-                "部分角色的显示语言与TTS语言不同，"
-                "请在<>内提供TTS朗读文本。"
+                f"注意：{', '.join(dual_names)} 的显示语言与TTS语音语言不同，"
+                "这些角色必须提供<TTS朗读文本>，不可省略。"
+                "TTS文本必须是对应语音语言的翻译，不能是显示语言的原文。"
             )
         else:
             tts_instruction = "可省略<TTS文本>（显示语言与TTS语言相同）。"
