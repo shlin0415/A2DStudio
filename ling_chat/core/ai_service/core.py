@@ -829,7 +829,7 @@ class AIService:
                 os.makedirs(os.path.dirname(output_path), exist_ok=True)
                 with open(output_path, "wb") as f:
                     f.write(audio_data)
-                return output_path
+                return f"/audio/a2d_{line_id}.wav"
 
         # ── Path 2: AIService-level tts_provider (fallback) ─
         if not hasattr(self, 'tts_provider') or not self.tts_provider:
@@ -843,7 +843,8 @@ class AIService:
         )
 
         audio_data = await self.tts_provider.gsv_adapter.generate_voice(text)
+        os.makedirs(os.path.dirname(output_path), exist_ok=True)
         with open(output_path, "wb") as f:
             f.write(audio_data)
 
-        return output_path
+        return f"/audio/a2d_{line_id}.wav"

@@ -74,7 +74,11 @@ export function useA2DWebSocket() {
           store.setPhase('paused')
           const audioPath = msg.payload?.audio_path
           if (audioPath) {
-            new Audio(audioPath).play().catch(e =>
+            // audio_path is a URL path like /audio/a2d_xxx.wav
+            const url = audioPath.startsWith('/')
+              ? `http://${window.location.hostname}:8765${audioPath}`
+              : audioPath
+            new Audio(url).play().catch(e =>
               console.error('[A2D] audio play failed', e)
             )
           }
