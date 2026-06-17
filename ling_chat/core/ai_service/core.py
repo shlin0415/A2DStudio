@@ -728,17 +728,12 @@ class AIService:
                 "content": "{旁白：开场}\n剧本家希望两个角色开始对话。",
             })
 
-        # Log full prompt content for debugging (truncated to avoid log bloat)
         logger.debug(
             f"A2D messages built: {len(messages)} messages, "
             f"{len(session.script_lines)} history lines"
         )
         for i, msg in enumerate(messages):
-            role = msg["role"]
-            content = msg["content"]
-            preview = content[:300].replace("\n", "\\n")
-            suffix = "..." if len(content) > 300 else ""
-            logger.debug(f"  A2D msg[{i}] {role}: {preview}{suffix}")
+            logger.debug(f"  A2D msg[{i}] {msg['role']}: {msg['content']}")
         return messages
 
     async def _a2d_call_llm_with_retry(self, messages: list[dict]) -> str:
@@ -821,7 +816,7 @@ class AIService:
             state="approved",
         )
 
-    async def _a2d_translate_for_tts(
+    def _a2d_translate_for_tts(
         self, text: str, speaker: str
     ) -> str:
         """Translate display_text to voice_language for TTS synthesis.
