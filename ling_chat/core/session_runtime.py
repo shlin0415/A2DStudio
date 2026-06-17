@@ -99,8 +99,9 @@ class SessionRuntime:
         if not modified_lines:
             return
 
-        # Build a map of line id -> original speaker for speaker preservation
+        # Build maps for speaker and emotion preservation from original lines
         speaker_map = {ln.id: ln.speaker for ln in self.script_lines}
+        emotion_map = {ln.id: ln.emotion for ln in self.script_lines}
 
         first_modified_idx = min(
             self._find_line_index(ln.get("id", ""))
@@ -118,8 +119,9 @@ class SessionRuntime:
                 index=first_modified_idx + i,
                 generation_epoch=self.generation_epoch,
                 speaker=speaker_map.get(line_id, "ema"),
+                emotion=emotion_map.get(line_id, ""),  # preserve original emotion
                 display_text=line_data.get("text", ""),
-                tts_text=line_data.get("text", ""),
+                tts_text="",  # cleared — triggers translation before TTS
                 state="approved",
             )
             self.script_lines.append(new_line)

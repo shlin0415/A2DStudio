@@ -4,14 +4,14 @@
     <div v-if="(store.isThinking || store.isSynthesizing) && store.currentLine" class="preview-area">
       <div class="preview-text">{{ store.currentLine.display_text }}</div>
       <div class="preview-status">
-        <template v-if="store.isThinking">{{ currentSpeakerName }}正在思考...</template>
+        <template v-if="store.isThinking">思考中...</template>
         <template v-else>&#x1F50A; 语音合成中...</template>
       </div>
     </div>
 
     <!-- Thinking / Synthesizing — no text yet -->
     <div v-else-if="store.isThinking" class="status-row">
-      <span class="status-text">{{ currentSpeakerName }}正在思考...</span>
+      <span class="status-text">思考中...</span>
     </div>
     <div v-else-if="store.isSynthesizing" class="status-row">
       <span class="status-text">&#x1F50A; 语音合成中...</span>
@@ -120,12 +120,6 @@ function onTextEdited() {
     store.setEdited(line.id, editingText.value)
   }
 }
-
-const currentSpeakerName = computed(() => {
-  const lastLine = store.lines[store.lines.length - 1]
-  if (!lastLine) return ''
-  return lastLine.speaker === 'ema' ? '桜羽エマ' : '希罗'
-})
 
 const errorLabel = computed(() => {
   const labels: Record<string, string> = {

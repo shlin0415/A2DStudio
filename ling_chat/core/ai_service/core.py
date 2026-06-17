@@ -708,11 +708,16 @@ class AIService:
                     "content": f"{{旁白: {line.display_text}}}",
                 })
             else:
+                # Include <TTS> tag only when tts_text differs from display_text
+                # (avoids empty tags and redundant identical content)
+                tts_part = ""
+                if line.tts_text and line.tts_text != line.display_text:
+                    tts_part = f"<{line.tts_text}>"
                 messages.append({
                     "role": "assistant",
                     "content": (
                         f'{{"speaker":"{line.speaker}"}}\n'
-                        f"【{line.emotion}】{line.display_text}"
+                        f"【{line.emotion}】{line.display_text}{tts_part}"
                     ),
                 })
 
@@ -807,6 +812,53 @@ class AIService:
             tts_text=tts_text,
             state="approved",
         )
+
+    async def _a2d_translate_for_tts(
+        self, text: str, speaker: str
+    ) -> str:
+        """Translate display_text to voice_language for TTS synthesis.
+
+        Only called when character has voice_language != display_language.
+        Uses the separate translator LLM provider (NOT the main dialogue LLM)
+        so translation context is fully isolated from story generation.
+        On failure, returns empty string — caller should skip TTS, never send
+        untranslated text to GSV with mismatched text_lang.
+        """
+        import os
+        from ling_chat.core.llm_providers.manager import LLMManager
+
+        cfg = self.a2d_session.characters.get(speaker) if speaker else None
+        if not cfg:
+            return ""
+
+        target_lang = cfg.voice_language  # "ja", "zh", etc.
+        if not target_lang or target_lang == cfg.display_language:
+            return text  # no translation needed
+
+        if not text or not text.strip():
+            return ""
+
+        lang_names = {"ja": "日语", "zh": "中文", "en": "英语"}
+        target_name = lang_names.get(target_lang, target_lang)
+
+        try:
+            translator = LLMManager(llm_job="translator")
+            prompt = (
+                f"将以下文本翻译为{target_name}，只返回译文，不要任何解释：\n{text}"
+            )
+            messages = [{"role": "user", "content": prompt}]
+            translated = await translator.process_message(messages)
+            if translated and translated.strip():
+                logger.debug(
+                    f"A2D translate: '{text[:30]}...' → '{translated[:30]}...'"
+                )
+                return translated.strip()
+        except Exception as e:
+            logger.warning(
+                f"A2D translation failed for speaker={speaker}: {e}"
+            )
+
+        return ""  # Fail closed — don't send wrong-language text to GSV
 
     async def a2d_synthesize(self, line_id: str, text: str, speaker: str = "") -> str:
         """Synthesize TTS for a script line. Returns audio file path.

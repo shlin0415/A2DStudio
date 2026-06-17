@@ -128,13 +128,32 @@ async def _generate_and_synthesize(ai_service, send: SendFn) -> str | None:
             await send({"type": "status", "payload": {"phase": "synthesizing"}})
             try:
                 speaker = pl.get("speaker", "")
-                audio_path = await ai_service.a2d_synthesize(
-                    pl["id"], pl["tts_text"], speaker=speaker
-                )
-                await send({
-                    "type": "tts_ready",
-                    "payload": {"id": pl["id"], "audio_path": audio_path},
-                })
+                tts_text = pl.get("tts_text", "")
+                display_text = pl.get("display_text", "")
+
+                # Translate if tts_text is empty or same as display_text (edited lines)
+                cfg = session.characters.get(speaker) if speaker else None
+                if cfg and cfg.voice_language != cfg.display_language:
+                    if not tts_text or tts_text == display_text:
+                        translated = await ai_service._a2d_translate_for_tts(
+                            display_text, speaker
+                        )
+                        if translated:
+                            tts_text = translated
+
+                if tts_text:
+                    audio_path = await ai_service.a2d_synthesize(
+                        pl["id"], tts_text, speaker=speaker
+                    )
+                    await send({
+                        "type": "tts_ready",
+                        "payload": {"id": pl["id"], "audio_path": audio_path},
+                    })
+                else:
+                    logger.warning(
+                        f"A2D: skipping TTS for line {pl['id']} — "
+                        f"no valid tts_text after translation"
+                    )
             except Exception as tts_e:
                 logger.warning(f"A2D TTS failed (non-fatal): {tts_e}")
 
@@ -205,7 +224,11 @@ async def _handle_retry(ai_service, client_id: str, payload: dict, send: SendFn)
 
 @register("a2d.regenerate_tts")
 async def _handle_regenerate_tts(ai_service, client_id: str, payload: dict, send: SendFn):
-    """Re-synthesize TTS for an existing line (no text regeneration)."""
+    """Re-synthesize TTS for an existing line (no text regeneration).
+
+    Translates display_text to voice_language before TTS when languages differ.
+    Updates ScriptLine in session with translated tts_text.
+    """
     line_id = payload.get("id", "")
     text = payload.get("text", "")
 
@@ -215,12 +238,33 @@ async def _handle_regenerate_tts(ai_service, client_id: str, payload: dict, send
         # Look up speaker from script_lines
         speaker = ""
         session = ai_service.a2d_session
+        target_line = None
         for line in session.script_lines:
             if line.id == line_id:
                 speaker = line.speaker
+                target_line = line
                 break
 
-        audio_path = await ai_service.a2d_synthesize(line_id, text, speaker=speaker)
+        # Translate if character uses different voice language
+        tts_text = text
+        cfg = session.characters.get(speaker) if speaker else None
+        if cfg and cfg.voice_language != cfg.display_language:
+            translated = await ai_service._a2d_translate_for_tts(text, speaker)
+            if translated:
+                tts_text = translated
+                # Update ScriptLine so history reconstruction uses correct text
+                if target_line:
+                    target_line.display_text = text
+                    target_line.tts_text = tts_text
+            else:
+                logger.warning(
+                    f"A2D: translation failed for regenerate_tts line {line_id}"
+                )
+                # Don't proceed — would send wrong-language text to GSV
+                await send({"type": "status", "payload": {"phase": "paused"}})
+                return
+
+        audio_path = await ai_service.a2d_synthesize(line_id, tts_text, speaker=speaker)
         await send({
             "type": "tts_ready",
             "payload": {"id": line_id, "audio_path": audio_path},

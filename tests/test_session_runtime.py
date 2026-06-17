@@ -97,7 +97,7 @@ class TestEditProtocol:
 
         assert len(sr.script_lines) == 1  # line2 truncated
         assert sr.script_lines[0].display_text == "edited ema text"
-        assert sr.script_lines[0].tts_text == "edited ema text"
+        assert sr.script_lines[0].tts_text == ""  # cleared — triggers translation
         assert sr.script_lines[0].speaker == "ema"  # speaker preserved from original
 
     @pytest.mark.asyncio
