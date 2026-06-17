@@ -6,6 +6,7 @@ import { ref, computed } from 'vue'
 export interface ScriptLine {
   id: string
   speaker: 'ema' | 'hiro'
+  emotion?: string
   display_text: string
   tts_text: string
   index: number

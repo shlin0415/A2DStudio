@@ -60,7 +60,7 @@ class SessionRuntime:
     # ── Continue / Edit ──────────────────────────────────────────
 
     async def handle_continue(
-        self, generation_id: str, edits: dict | None = None
+        self, generation_id: str, edits: list[dict] | None = None
     ) -> int:
         """User clicks continue → cancel current stream + apply edits + new epoch."""
         self.generation_epoch += 1
@@ -75,8 +75,8 @@ class SessionRuntime:
             self._active_llm_task = None
 
         # Apply edits: discard lines after first modified line
-        if edits and "modified_lines" in edits:
-            self._apply_edits(edits["modified_lines"])
+        if edits:
+            self._apply_edits(edits)
 
         # Clear queues
         while not self.sentence_queue.empty():
@@ -89,14 +89,23 @@ class SessionRuntime:
         return self.generation_epoch
 
     def _apply_edits(self, modified_lines: list[dict]):
-        """Update edited lines in script_lines; discard everything after the first edit."""
+        """Apply user edits from frontend [{id, text}] format to script_lines.
+
+        Frontend sends edits as a list of {id, text} dicts. This method:
+        1. Finds the first modified line index by id lookup
+        2. Truncates script_lines to that index (discarding subsequent lines)
+        3. Appends edited lines, looking up the original speaker by id
+        """
         if not modified_lines:
             return
 
+        # Build a map of line id -> original speaker for speaker preservation
+        speaker_map = {ln.id: ln.speaker for ln in self.script_lines}
+
         first_modified_idx = min(
-            self._find_line_index(ln["id"])
+            self._find_line_index(ln.get("id", ""))
             for ln in modified_lines
-            if "id" in ln
+            if ln.get("id")
         )
 
         # Truncate from first modified index
@@ -104,15 +113,21 @@ class SessionRuntime:
 
         # Append modified lines
         for i, line_data in enumerate(modified_lines):
+            line_id = line_data.get("id", "")
             new_line = ScriptLine(
                 index=first_modified_idx + i,
                 generation_epoch=self.generation_epoch,
-                speaker=line_data.get("speaker", "ema"),
-                display_text=line_data.get("display_text", ""),
-                tts_text=line_data.get("tts_text", ""),
+                speaker=speaker_map.get(line_id, "ema"),
+                display_text=line_data.get("text", ""),
+                tts_text=line_data.get("text", ""),
                 state="approved",
             )
             self.script_lines.append(new_line)
+
+        logger.info(
+            f"SessionRuntime: applied {len(modified_lines)} edit(s), "
+            f"script_lines truncated to {len(self.script_lines)} entries"
+        )
 
     def _find_line_index(self, line_id: str) -> int:
         for i, line in enumerate(self.script_lines):

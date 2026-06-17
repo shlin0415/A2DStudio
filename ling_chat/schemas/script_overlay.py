@@ -33,6 +33,7 @@ class ScriptLine:
     generation_epoch: int = 0
 
     speaker: Literal["ema", "hiro", "narrator"] = "ema"
+    emotion: str = ""
     display_text: str = ""
     tts_text: str = ""
 
@@ -133,7 +134,8 @@ class ScriptLinePayload:
     speaker: str  # "ema" | "hiro"
     display_text: str
     tts_text: str
-    index: int
+    emotion: str = ""
+    index: int = 0
 
 
 @dataclass

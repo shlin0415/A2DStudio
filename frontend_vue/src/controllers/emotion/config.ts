@@ -37,6 +37,8 @@ export const EMOTION_CONFIG_EMO: EmotionMap = {
   惊讶: '惊讶',
   正常: '正常',
   平静: '平静',
+  无语: '无奈',
+  尴尬: '紧张',
   AI思考: 'none',
 }
 

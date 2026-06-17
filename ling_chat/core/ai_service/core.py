@@ -554,6 +554,7 @@ class AIService:
             "payload": {
                 "id": line.id,
                 "speaker": line.speaker,
+                "emotion": line.emotion,
                 "display_text": line.display_text,
                 "tts_text": line.tts_text,
                 "index": line.index,
@@ -711,7 +712,7 @@ class AIService:
                     "role": "assistant",
                     "content": (
                         f'{{"speaker":"{line.speaker}"}}\n'
-                        f"【】{line.display_text}"
+                        f"【{line.emotion}】{line.display_text}"
                     ),
                 })
 
@@ -784,6 +785,8 @@ class AIService:
             return None
 
         # Parse: 【emotion】content<TTS>（action）
+        emotion_match = re.match(r"^【(.+?)】", text)
+        emotion = emotion_match.group(1) if emotion_match else ""
         content = re.sub(r"^【.*?】", "", text).strip()
         if not content:
             content = text
@@ -799,6 +802,7 @@ class AIService:
 
         return ScriptLine(
             speaker=speaker,
+            emotion=emotion,
             display_text=display_text,
             tts_text=tts_text,
             state="approved",

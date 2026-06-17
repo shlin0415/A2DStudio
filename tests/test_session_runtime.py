@@ -77,3 +77,83 @@ class TestSceneConfig:
         sr.update_scene("测试", "同人演绎", "原作第3章")
         suffix = sr.build_scene_prompt_suffix()
         assert "原作第3章" in suffix
+
+
+class TestEditProtocol:
+    """AC-1: Verify edit protocol fix — frontend [{id, text}] format is applied."""
+
+    @pytest.mark.asyncio
+    async def test_edit_single_line_updates_text(self):
+        """User edits one line → display_text and tts_text are updated."""
+        sr = make_sr()
+        line1 = ScriptLine(speaker="ema", display_text="original ema text")
+        line2 = ScriptLine(speaker="hiro", display_text="original hiro text")
+        sr.add_line(line1)
+        sr.add_line(line2)
+
+        await sr.handle_continue("gen-1", edits=[
+            {"id": line1.id, "text": "edited ema text"},
+        ])
+
+        assert len(sr.script_lines) == 1  # line2 truncated
+        assert sr.script_lines[0].display_text == "edited ema text"
+        assert sr.script_lines[0].tts_text == "edited ema text"
+        assert sr.script_lines[0].speaker == "ema"  # speaker preserved from original
+
+    @pytest.mark.asyncio
+    async def test_continue_without_edits_no_truncation(self):
+        """Continue without edits → no changes to script_lines."""
+        sr = make_sr()
+        sr.add_line(ScriptLine(speaker="ema", display_text="hello"))
+        sr.add_line(ScriptLine(speaker="hiro", display_text="world"))
+
+        await sr.handle_continue("gen-1", edits=None)
+
+        assert len(sr.script_lines) == 2  # nothing truncated
+
+    @pytest.mark.asyncio
+    async def test_continue_with_empty_edits_no_truncation(self):
+        """Empty edits list → _apply_edits skipped, lines preserved."""
+        sr = make_sr()
+        sr.add_line(ScriptLine(speaker="ema", display_text="hello"))
+
+        await sr.handle_continue("gen-1", edits=[])
+
+        assert len(sr.script_lines) == 1
+
+    @pytest.mark.asyncio
+    async def test_unknown_line_id_no_crash(self):
+        """Edit with unknown line id → no crash, original kept, edit appended."""
+        sr = make_sr()
+        sr.add_line(ScriptLine(speaker="ema", display_text="hello"))
+
+        await sr.handle_continue("gen-1", edits=[
+            {"id": "nonexistent-id", "text": "ghost edit"},
+        ])
+
+        # Unknown id causes _find_line_index to return len(script_lines)=1
+        # truncate [:1] keeps original, then edit is appended → 2 lines
+        assert len(sr.script_lines) == 2
+        assert sr.script_lines[0].display_text == "hello"  # original kept
+        assert sr.script_lines[1].display_text == "ghost edit"
+
+    @pytest.mark.asyncio
+    async def test_edit_truncates_subsequent_lines(self):
+        """Editing line 2 of 4 → lines 3-4 are discarded."""
+        sr = make_sr()
+        lines = [
+            ScriptLine(speaker="ema", display_text="l1"),
+            ScriptLine(speaker="hiro", display_text="l2"),
+            ScriptLine(speaker="ema", display_text="l3"),
+            ScriptLine(speaker="hiro", display_text="l4"),
+        ]
+        for ln in lines:
+            sr.add_line(ln)
+
+        await sr.handle_continue("gen-1", edits=[
+            {"id": lines[1].id, "text": "edited l2"},
+        ])
+
+        assert len(sr.script_lines) == 2  # l1 + edited l2
+        assert sr.script_lines[0].display_text == "l1"
+        assert sr.script_lines[1].display_text == "edited l2"

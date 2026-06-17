@@ -8,6 +8,9 @@ import type { GameRole } from '@/stores/modules/game/state'
 let ws: WebSocket | null = null
 let connected = false
 
+// speaker-to-roleId mapping built from a2d.characters payload
+const speakerToRoleId: Record<string, number> = {}
+
 export function useA2DWebSocket() {
   const store = useScriptStore()
   const WS_URL = `ws://${window.location.hostname}:8765/ws`
@@ -34,6 +37,11 @@ export function useA2DWebSocket() {
             gameStore.presentRoleIds = []
             for (const c of chars) {
               const roleId = c.roleId as number
+              const scriptRoleKey = (c.script_role_key as string) || ''
+              // Build speaker-to-roleId mapping for emotion propagation
+              if (scriptRoleKey) {
+                speakerToRoleId[scriptRoleKey] = roleId
+              }
               // Only create if not already present (idempotent on restart)
               if (!gameStore.gameRoles[roleId]) {
                 gameStore.gameRoles[roleId] = {
@@ -57,7 +65,8 @@ export function useA2DWebSocket() {
               }
               gameStore.presentRoleIds.push(roleId)
             }
-            console.log('[A2D] characters loaded:', gameStore.presentRoleIds)
+            console.log('[A2D] characters loaded:', gameStore.presentRoleIds,
+              'speakerToRoleId:', speakerToRoleId)
           }
           break
         }
@@ -68,6 +77,20 @@ export function useA2DWebSocket() {
         }
         case 'script_line': {
           store.addLine(msg.payload as ScriptLine)
+          // Propagate emotion to character avatar rendering
+          const payload = msg.payload as Record<string, unknown>
+          const speaker = payload.speaker as string
+          const emotion = (payload.emotion as string) || ''
+          if (speaker && emotion) {
+            const roleId = speakerToRoleId[speaker]
+            if (roleId) {
+              const gameStore = useGameStore()
+              if (gameStore.gameRoles[roleId]) {
+                gameStore.gameRoles[roleId].emotion = emotion
+                gameStore.gameRoles[roleId].originalEmotion = emotion
+              }
+            }
+          }
           break
         }
         case 'tts_ready': {
