@@ -33,6 +33,11 @@ export const useScriptStore = defineStore('script', () => {
   const generationId = ref<string | null>(null)
   const consecutiveErrors = ref(0)
 
+  // Cross-tab editor state
+  const selectedLineId = ref<string | null>(null)
+  const editedText = ref<Record<string, string>>({})
+  const activeTab = ref<'review' | 'event'>('review')
+
   const isThinking = computed(() => phase.value === 'thinking')
   const isSynthesizing = computed(() => phase.value === 'synthesizing')
   const isPaused = computed(() => phase.value === 'paused')
@@ -66,11 +71,41 @@ export const useScriptStore = defineStore('script', () => {
     error.value = null
     generationId.value = null
     consecutiveErrors.value = 0
+    selectedLineId.value = null
+    editedText.value = {}
+    activeTab.value = 'review'
   }
+
+  // ── Cross-tab editor helpers ────────────────────
+
+  function selectLine(lineId: string) {
+    selectedLineId.value = lineId
+    activeTab.value = 'review'
+  }
+
+  function setEdited(lineId: string, text: string) {
+    editedText.value[lineId] = text
+  }
+
+  function clearEdited(lineId: string) {
+    delete editedText.value[lineId]
+  }
+
+  function commitEdits() {
+    editedText.value = {}
+    selectedLineId.value = null
+  }
+
+  const selectedLine = computed(() => {
+    if (!selectedLineId.value) return null
+    return lines.value.find(l => l.id === selectedLineId.value) || null
+  })
 
   return {
     lines, currentLine, phase, error, generationId, consecutiveErrors,
+    selectedLineId, editedText, activeTab, selectedLine,
     isThinking, isSynthesizing, isPaused, hasError, isIdle,
     addLine, setPhase, setError, clearError, reset,
+    selectLine, setEdited, clearEdited, commitEdits,
   }
 })

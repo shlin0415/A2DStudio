@@ -2,31 +2,33 @@
   <div class="script-panel">
     <div class="panel-tabs">
       <button
-        :class="['tab', { active: activeTab === 'review' }]"
-        @click="activeTab = 'review'"
+        :class="['tab', { active: store.activeTab === 'review' }]"
+        @click="store.activeTab = 'review'"
       >
         审核台
       </button>
       <button
-        :class="['tab', { active: activeTab === 'event' }]"
-        @click="activeTab = 'event'"
+        :class="['tab', { active: store.activeTab === 'event' }]"
+        @click="store.activeTab = 'event'"
       >
         时轴
       </button>
     </div>
     <div class="panel-content">
-      <ReviewPanel v-if="activeTab === 'review'" />
-      <EventTrack v-else />
+      <KeepAlive>
+        <ReviewPanel v-if="store.activeTab === 'review'" />
+        <EventTrack v-else />
+      </KeepAlive>
     </div>
   </div>
 </template>
 
 <script setup lang="ts">
-import { ref } from 'vue'
 import ReviewPanel from './ReviewPanel.vue'
 import EventTrack from './EventTrack.vue'
+import { useScriptStore } from '@/stores/modules/script'
 
-const activeTab = ref<'review' | 'event'>('review')
+const store = useScriptStore()
 </script>
 
 <style scoped>

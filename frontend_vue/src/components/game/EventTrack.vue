@@ -3,11 +3,15 @@
     <div v-if="store.lines.length === 0" class="empty-state">
       暂无台词。开始对话后，生成的所有台词将显示在这里。
     </div>
-    <div v-else class="line-list">
+    <div v-else ref="trackRef" class="line-list">
       <div
         v-for="line in store.lines"
         :key="line.id"
-        class="line-item"
+        :class="[
+          'line-item',
+          { 'line-item--active': store.selectedLineId === line.id }
+        ]"
+        @click="store.selectLine(line.id)"
       >
         <span class="line-index">{{ line.index + 1 }}</span>
         <span :class="['line-speaker', line.speaker]">
@@ -20,9 +24,23 @@
 </template>
 
 <script setup lang="ts">
+import { ref, watch, nextTick } from 'vue'
 import { useScriptStore } from '@/stores/modules/script'
 
 const store = useScriptStore()
+const trackRef = ref<HTMLElement | null>(null)
+
+// Auto-scroll to bottom when new lines arrive (only if user is near bottom)
+watch(() => store.lines.length, () => {
+  nextTick(() => {
+    if (!trackRef.value) return
+    const el = trackRef.value
+    const isNearBottom = el.scrollHeight - el.scrollTop - el.clientHeight < 60
+    if (isNearBottom) {
+      el.scrollTop = el.scrollHeight
+    }
+  })
+})
 </script>
 
 <style scoped>
@@ -58,6 +76,12 @@ const store = useScriptStore()
 
 .line-item:hover {
   background: rgba(255, 255, 255, 0.05);
+}
+
+.line-item--active {
+  background: rgba(74, 144, 217, 0.2);
+  border-left: 3px solid #4a90d9;
+  padding-left: 5px;
 }
 
 .line-index {

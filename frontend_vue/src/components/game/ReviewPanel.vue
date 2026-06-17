@@ -85,15 +85,28 @@ const editingText = ref('')
 let lastLineId = ''
 let userEdited = false
 
-watch(() => store.currentLine, (line) => {
+// The line currently displayed in the editor:
+// selectedLine (from EventTrack click) takes priority over currentLine (latest generated)
+const activeLine = computed(() => store.selectedLine || store.currentLine)
+
+// Watch for line changes: new generation OR user clicking a timeline line
+watch(activeLine, (line) => {
   if (!line) return
+  // Check store-level editedText first (persisted across tab switches)
+  const stored = store.editedText[line.id]
+  if (stored !== undefined) {
+    editingText.value = stored
+    lastLineId = line.id
+    userEdited = true
+    return
+  }
   // New line arrived (different id): reset editing text + dirty flag
   if (line.id !== lastLineId) {
     lastLineId = line.id
     editingText.value = line.display_text
     userEdited = false
   }
-  // Same line, user hasn't edited: update from store (e.g., first load)
+  // Same line, user hasn't edited: update from store
   else if (!userEdited) {
     editingText.value = line.display_text
   }
@@ -101,6 +114,11 @@ watch(() => store.currentLine, (line) => {
 
 function onTextEdited() {
   userEdited = true
+  // Persist to store-level editedText map for cross-tab survival
+  const line = activeLine.value
+  if (line) {
+    store.setEdited(line.id, editingText.value)
+  }
 }
 
 const currentSpeakerName = computed(() => {
@@ -131,16 +149,25 @@ function handleStart() {
 }
 
 function handleContinue() {
-  if (!store.currentLine) return
-  const edits = editingText.value !== store.currentLine.display_text
-    ? [{ id: store.currentLine.id, text: editingText.value }]
+  const line = activeLine.value
+  if (!line) return
+  const originalText = line.display_text
+  const edits = editingText.value !== originalText
+    ? [{ id: line.id, text: editingText.value }]
     : []
+  // Persist current edit before sending
+  if (userEdited) {
+    store.setEdited(line.id, editingText.value)
+  }
   sendContinue(edits)
+  // Clear store-level edit for this line after commit
+  store.clearEdited(line.id)
 }
 
 function regenerateTTS() {
-  if (!store.currentLine) return
-  sendRegenerateTTS(store.currentLine.id, editingText.value)
+  const line = activeLine.value
+  if (!line) return
+  sendRegenerateTTS(line.id, editingText.value)
 }
 
 function retry() {
