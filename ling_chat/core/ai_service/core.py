@@ -708,11 +708,12 @@ class AIService:
                     "content": f"{{旁白: {line.display_text}}}",
                 })
             else:
-                # Include <TTS> tag only when tts_text differs from display_text
-                # (avoids empty tags and redundant identical content)
-                tts_part = ""
-                if line.tts_text and line.tts_text != line.display_text:
-                    tts_part = f"<{line.tts_text}>"
+                # Include <TTS> tag in history to preserve format for LLM.
+                # For dual-language characters: always include <TTS>,
+                # using tts_text if available, otherwise display_text as placeholder.
+                # This prevents LLM format degradation after user edits (empty tts_text).
+                tts_text = line.tts_text or line.display_text
+                tts_part = f"<{tts_text}>"
                 messages.append({
                     "role": "assistant",
                     "content": (

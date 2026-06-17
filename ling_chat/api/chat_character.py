@@ -382,9 +382,9 @@ async def get_role_avatar(role_id: int, emotion: str, clothes_name: str):
         logger.error(f"读取目录失败: {str(e)}")
         raise HTTPException(status_code=500, detail=f"读取目录失败: {str(e)}")
 
-    # 如果没找到对应情绪的图片，且当前情绪是"平静"，则尝试查找"正常"的图片
-    if not emotion_files and emotion == "平静":
-        logger.info(f"未找到平静表情图片，尝试使用正常表情图片: Path={avatar_path}")
+    # Fallback: any missing emotion → 正常 (default) with warning
+    if not emotion_files and emotion != "正常":
+        logger.warning(f"立绘缺失，回退默认: Path={avatar_path}, Emotion={emotion} → 正常")
         emotion_files = [
             f
             for f in avatar_path.iterdir()
