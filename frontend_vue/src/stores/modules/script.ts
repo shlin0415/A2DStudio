@@ -21,7 +21,7 @@ export interface ErrorInfo {
   max_retries: number
 }
 
-export type Phase = 'idle' | 'thinking' | 'synthesizing' | 'paused' | 'error'
+export type Phase = 'idle' | 'thinking' | 'translating' | 'synthesizing' | 'paused' | 'error'
 
 // ── Store ──────────────────────────────────────────
 
@@ -39,6 +39,7 @@ export const useScriptStore = defineStore('script', () => {
   const activeTab = ref<'review' | 'event'>('review')
 
   const isThinking = computed(() => phase.value === 'thinking')
+  const isTranslating = computed(() => phase.value === 'translating')
   const isSynthesizing = computed(() => phase.value === 'synthesizing')
   const isPaused = computed(() => phase.value === 'paused')
   const hasError = computed(() => phase.value === 'error')
@@ -104,7 +105,7 @@ export const useScriptStore = defineStore('script', () => {
   return {
     lines, currentLine, phase, error, generationId, consecutiveErrors,
     selectedLineId, editedText, activeTab, selectedLine,
-    isThinking, isSynthesizing, isPaused, hasError, isIdle,
+    isThinking, isTranslating, isSynthesizing, isPaused, hasError, isIdle,
     addLine, setPhase, setError, clearError, reset,
     selectLine, setEdited, clearEdited, commitEdits,
   }

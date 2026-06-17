@@ -13,6 +13,9 @@
     <div v-else-if="store.isThinking" class="status-row">
       <span class="status-text">思考中...</span>
     </div>
+    <div v-else-if="store.isTranslating" class="status-row">
+      <span class="status-text">&#x1F310; 翻译中...</span>
+    </div>
     <div v-else-if="store.isSynthesizing" class="status-row">
       <span class="status-text">&#x1F50A; 语音合成中...</span>
     </div>

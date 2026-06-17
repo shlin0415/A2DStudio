@@ -727,10 +727,17 @@ class AIService:
                 "content": "{旁白：开场}\n剧本家希望两个角色开始对话。",
             })
 
+        # Log full prompt content for debugging (truncated to avoid log bloat)
         logger.debug(
             f"A2D messages built: {len(messages)} messages, "
             f"{len(session.script_lines)} history lines"
         )
+        for i, msg in enumerate(messages):
+            role = msg["role"]
+            content = msg["content"]
+            preview = content[:300].replace("\n", "\\n")
+            suffix = "..." if len(content) > 300 else ""
+            logger.debug(f"  A2D msg[{i}] {role}: {preview}{suffix}")
         return messages
 
     async def _a2d_call_llm_with_retry(self, messages: list[dict]) -> str:
@@ -847,10 +854,10 @@ class AIService:
                 f"将以下文本翻译为{target_name}，只返回译文，不要任何解释：\n{text}"
             )
             messages = [{"role": "user", "content": prompt}]
-            translated = await translator.process_message(messages)
+            translated = translator.process_message(messages)  # sync, not async
             if translated and translated.strip():
-                logger.debug(
-                    f"A2D translate: '{text[:30]}...' → '{translated[:30]}...'"
+                logger.info(
+                    f"A2D translate: '{text[:40]}...' → '{translated[:40]}...'"
                 )
                 return translated.strip()
         except Exception as e:

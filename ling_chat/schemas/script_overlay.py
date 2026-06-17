@@ -119,7 +119,7 @@ class RegenerateTTSMessage(WSMessage):
 
 @dataclass
 class StatusPayload:
-    phase: Literal["thinking", "synthesizing", "paused", "error"]
+    phase: Literal["thinking", "translating", "synthesizing", "paused", "error"]
 
 
 @dataclass

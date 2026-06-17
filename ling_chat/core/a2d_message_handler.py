@@ -135,11 +135,11 @@ async def _generate_and_synthesize(ai_service, send: SendFn) -> str | None:
                 cfg = session.characters.get(speaker) if speaker else None
                 if cfg and cfg.voice_language != cfg.display_language:
                     if not tts_text or tts_text == display_text:
-                        translated = await ai_service._a2d_translate_for_tts(
+                        tts_text = ai_service._a2d_translate_for_tts(
                             display_text, speaker
-                        )
-                        if translated:
-                            tts_text = translated
+                        )  # sync call — no await
+                        # If translation failed, tts_text stays empty → skip TTS
+                        # (never send untranslated text to GSV with wrong text_lang)
 
                 if tts_text:
                     audio_path = await ai_service.a2d_synthesize(
@@ -232,8 +232,6 @@ async def _handle_regenerate_tts(ai_service, client_id: str, payload: dict, send
     line_id = payload.get("id", "")
     text = payload.get("text", "")
 
-    await send({"type": "status", "payload": {"phase": "synthesizing"}})
-
     try:
         # Look up speaker from script_lines
         speaker = ""
@@ -249,7 +247,8 @@ async def _handle_regenerate_tts(ai_service, client_id: str, payload: dict, send
         tts_text = text
         cfg = session.characters.get(speaker) if speaker else None
         if cfg and cfg.voice_language != cfg.display_language:
-            translated = await ai_service._a2d_translate_for_tts(text, speaker)
+            await send({"type": "status", "payload": {"phase": "translating"}})
+            translated = ai_service._a2d_translate_for_tts(text, speaker)  # sync
             if translated:
                 tts_text = translated
                 # Update ScriptLine so history reconstruction uses correct text
@@ -260,10 +259,10 @@ async def _handle_regenerate_tts(ai_service, client_id: str, payload: dict, send
                 logger.warning(
                     f"A2D: translation failed for regenerate_tts line {line_id}"
                 )
-                # Don't proceed — would send wrong-language text to GSV
                 await send({"type": "status", "payload": {"phase": "paused"}})
                 return
 
+        await send({"type": "status", "payload": {"phase": "synthesizing"}})
         audio_path = await ai_service.a2d_synthesize(line_id, tts_text, speaker=speaker)
         await send({
             "type": "tts_ready",
