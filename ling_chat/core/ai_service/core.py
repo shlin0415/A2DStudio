@@ -723,24 +723,25 @@ class AIService:
         messages = [{"role": "system", "content": system_prompt}]
 
         for line in session.script_lines:
+            if line.raw_text:
+                # KV-cache-friendly: use LLM's original output verbatim.
+                # This preserves （action）, exact spacing, and token sequence.
+                content = line.raw_text
+            else:
+                # Fallback: reconstruct from fields (edited lines, legacy data).
+                # edited lines have raw_text=None; we can't preserve KV cache for them.
+                tts_text = line.tts_text or line.display_text
+                content = f"【{line.emotion}】{line.display_text}<{tts_text}>"
+
             if line.speaker == "narrator":
                 messages.append({
                     "role": "user",
-                    "content": f"{{旁白: {line.display_text}}}",
+                    "content": f"{{旁白: {content}}}",
                 })
             else:
-                # Include <TTS> tag in history to preserve format for LLM.
-                # For dual-language characters: always include <TTS>,
-                # using tts_text if available, otherwise display_text as placeholder.
-                # This prevents LLM format degradation after user edits (empty tts_text).
-                tts_text = line.tts_text or line.display_text
-                tts_part = f"<{tts_text}>"
                 messages.append({
                     "role": "assistant",
-                    "content": (
-                        f'{{"speaker":"{line.speaker}"}}\n'
-                        f"【{line.emotion}】{line.display_text}{tts_part}"
-                    ),
+                    "content": f'{{"speaker":"{line.speaker}"}}\n{content}',
                 })
 
         if len(session.script_lines) == 0:
@@ -822,6 +823,7 @@ class AIService:
                 emotion="",
                 display_text=text,
                 tts_text="",  # empty = skip TTS
+                raw_text=text,  # preserve for KV-cache-friendly history
                 state="approved",
             )
 
@@ -846,6 +848,7 @@ class AIService:
             emotion=emotion,
             display_text=display_text,
             tts_text=tts_text,
+            raw_text=text,  # preserve LLM original for KV-cache-friendly history
             state="approved",
         )
 

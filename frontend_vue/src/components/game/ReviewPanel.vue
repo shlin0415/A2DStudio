@@ -98,11 +98,12 @@ let lastLineId = ''
 let userEdited = false
 
 // The line currently displayed in the editor:
-// 1. selectedLine (EventTrack click) — user is reviewing a specific line
-// 2. playingLine — audio is playing, subtitle syncs to audio
-// 3. currentLine — latest generated (used during thinking / idle / paused-editing)
+// 1. selectedLine (EventTrack click) — user reviewing a specific line
+// 2. playingLine — audio playing, subtitle syncs to audio
+// 3. currentLine — only used when idle/paused (NOT during busy/thinking/synthesizing)
+// During busy, fall back to null so no text/emotion flashes before audio starts.
 const activeLine = computed(() =>
-  store.selectedLine || store.playingLine || store.currentLine
+  store.selectedLine || store.playingLine || (store.isBusy ? null : store.currentLine)
 )
 
 // Watch for line changes: new generation OR user clicking a timeline line

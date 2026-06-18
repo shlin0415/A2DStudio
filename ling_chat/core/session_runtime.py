@@ -123,6 +123,7 @@ class SessionRuntime:
                 emotion=emotion_map.get(line_id, ""),  # preserve original emotion
                 display_text=line_data.get("text", ""),
                 tts_text="",  # cleared — triggers translation before TTS
+                raw_text="",  # user-edited: can't preserve KV cache
                 state="approved",
             )
             self.script_lines.append(new_line)

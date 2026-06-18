@@ -36,6 +36,7 @@ class ScriptLine:
     emotion: str = ""
     display_text: str = ""
     tts_text: str = ""
+    raw_text: str = ""  # LLM original line preserved for KV-cache-friendly history
 
     state: Literal[
         "draft", "approved", "tts_pending", "tts_ready", "playing", "played", "invalidated"

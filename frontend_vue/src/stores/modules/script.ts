@@ -72,10 +72,12 @@ export const useScriptStore = defineStore('script', () => {
     const oldPhase = phase.value
     phase.value = newPhase
     emitTrace('phase_change', { from: oldPhase, to: newPhase })
-    // Clear batch progress at start of each batch
+    // Clear batch progress and audio state at start of each batch
     if (newPhase === 'thinking') {
       batchIndex.value = 0
       batchTotal.value = 0
+      playingLineId.value = null
+      isAudioPlaying.value = false
     }
   }
 

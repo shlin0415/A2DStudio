@@ -21,7 +21,8 @@ function playNextInQueue(store?: ReturnType<typeof import('@/stores/modules/scri
     isAudioPlaying = false
     if (store) {
       store.isAudioPlaying = false
-      store.playingLineId = null
+      // Do NOT clear playingLineId — keep it so activeLine stays on
+      // the last spoken line during the gap before next tts_ready.
     }
     emitTrace('audio_queue_empty')
     return
@@ -34,6 +35,22 @@ function playNextInQueue(store?: ReturnType<typeof import('@/stores/modules/scri
     store.isAudioPlaying = true
     store.playingLineId = item.lineId
     emitTrace('playingLine', { lineId: item.lineId })
+
+    // Sync emotion: lookup speaker+emotion from store.lines
+    const gameStore = useGameStore()
+    const line = store.lines.find(l => l.id === item.lineId)
+    if (line) {
+      const speaker = line.speaker
+      const emotion = (line as Record<string, unknown>).emotion as string | undefined
+      if (speaker && emotion) {
+        const roleId = speakerToRoleId[speaker]
+        if (roleId && gameStore.gameRoles[roleId]) {
+          gameStore.gameRoles[roleId].emotion = emotion
+          gameStore.gameRoles[roleId].originalEmotion = emotion
+          emitTrace('emotion', { speaker, emotion, lineId: item.lineId })
+        }
+      }
+    }
   }
   const audio = new Audio(item.url)
   audio.onended = () => {
@@ -116,21 +133,8 @@ export function useA2DWebSocket() {
         }
         case 'script_line': {
           store.addLine(msg.payload as ScriptLine)
-          // Propagate emotion to character avatar rendering
-          const payload = msg.payload as Record<string, unknown>
-          const speaker = payload.speaker as string
-          const emotion = (payload.emotion as string) || ''
-          if (speaker && emotion) {
-            const roleId = speakerToRoleId[speaker]
-            if (roleId) {
-              const gameStore = useGameStore()
-              if (gameStore.gameRoles[roleId]) {
-                gameStore.gameRoles[roleId].emotion = emotion
-                gameStore.gameRoles[roleId].originalEmotion = emotion
-                emitTrace('emotion', { speaker, emotion, lineId: payload.id as string })
-              }
-            }
-          }
+          // Emotion is now set in playNextInQueue when audio actually starts,
+          // not when script_line arrives. See playNextInQueue for the sync logic.
           break
         }
         case 'tts_ready': {
