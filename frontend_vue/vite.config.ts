@@ -137,6 +137,7 @@ export default defineConfig(({ mode }) => {
       },
     },
     server: {
+      host: '0.0.0.0',  // listen on all interfaces (IPv4 + IPv6) so httpx can reach via 127.0.0.1
       proxy: {
         // 代理普通 HTTP API 请求
         '/api': {
