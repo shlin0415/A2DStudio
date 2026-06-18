@@ -158,3 +158,4 @@ memory-bank/
 tmp/
 experience/
 .trash/
+.humanize/
