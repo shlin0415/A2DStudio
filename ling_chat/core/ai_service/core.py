@@ -496,14 +496,15 @@ class AIService:
     async def a2d_generate_next(
         self,
         scene_suffix: str | None = None,
-    ) -> dict | None:
-        """Generate the next script line with LLM (text only, no TTS).
+    ) -> list[dict] | None:
+        """Generate next script lines with LLM (text only, no TTS).
 
         LLM decides who speaks via JSON speaker markers:
           {"speaker":"ema"}\\n【高兴】text<TTS_text>（动作）
 
-        Returns a WS-ready dict:
-          { type: "script_line", payload: {id, speaker, display_text, tts_text, index} }
+        Returns a list of WS-ready dicts (one per parsed line):
+          [{ type: "script_line", payload: {id, speaker, display_text, tts_text, index} }, ...]
+        None if LLM returns empty response.
         """
         import json as json_mod
         from ling_chat.schemas.script_overlay import ScriptLine
@@ -548,18 +549,21 @@ class AIService:
                 f"LLM returned no valid script lines. Raw: {full_text[:300]}"
             )
 
-        line = lines[0]
-        return {
-            "type": "script_line",
-            "payload": {
-                "id": line.id,
-                "speaker": line.speaker,
-                "emotion": line.emotion,
-                "display_text": line.display_text,
-                "tts_text": line.tts_text,
-                "index": line.index,
-            },
-        }
+        # Return all parsed lines (len(lines) drives downstream; never hardcode batch_size)
+        return [
+            {
+                "type": "script_line",
+                "payload": {
+                    "id": line.id,
+                    "speaker": line.speaker,
+                    "emotion": line.emotion,
+                    "display_text": line.display_text,
+                    "tts_text": line.tts_text,
+                    "index": line.index,
+                },
+            }
+            for line in lines
+        ]
 
     def _a2d_build_system_prompt(self, scene_suffix: str | None = None) -> str:
         """Build system prompt with character configs, scene, and knowledge.
@@ -634,15 +638,22 @@ class AIService:
             tts_instruction = "可省略<TTS文本>（显示语言与TTS语言相同）。"
 
         prompt_lines = []
+        batch = session.batch_size
         prompt_lines.append("## 发言输出格式")
-        prompt_lines.append("每次只生成一句对话。根据对话上下文，选择一个合适的角色发言。")
-        prompt_lines.append("先标注说话者，然后使用标准格式：")
+        if batch == 1:
+            prompt_lines.append("每次生成一句对话。根据对话上下文，选择一个合适的角色发言。")
+        else:
+            prompt_lines.append(f"每次生成{batch}句对话。根据对话上下文，选择角色发言。")
+        prompt_lines.append("每句话先标注说话者，然后使用标准格式：")
         prompt_lines.append("")
         prompt_lines.append('{"speaker":"ema"}')
         prompt_lines.append("【情绪】显示文本<TTS朗读文本>（动作描述）")
         prompt_lines.append("")
         prompt_lines.append("规则：")
-        prompt_lines.append("- 每次只生成一句对话（一次只输出一个 speaker 标记和一个发言）")
+        if batch == 1:
+            prompt_lines.append("- 每次输出一个 speaker 标记和一个发言")
+        else:
+            prompt_lines.append(f"- 每次输出 {batch} 组 speaker 标记和发言，每组一行 speaker 标记 + 一行发言")
         prompt_lines.append("- speaker 使用上面定义的 speaker_id")
         prompt_lines.append("- 【情绪】方括号内为情绪标签")
         prompt_lines.append(f"- <TTS朗读文本> 尖括号内为TTS朗读文本，{tts_instruction}")

@@ -11,7 +11,7 @@
           'line-item',
           { 'line-item--active': store.selectedLineId === line.id }
         ]"
-        @click="store.selectLine(line.id)"
+        @click="onLineClick(line)"
       >
         <span class="line-index">{{ line.index + 1 }}</span>
         <span :class="['line-speaker', line.speaker]">
@@ -26,9 +26,17 @@
 <script setup lang="ts">
 import { ref, watch, nextTick } from 'vue'
 import { useScriptStore } from '@/stores/modules/script'
+import { useA2DWebSocket } from '@/composables/useA2DWebSocket'
+import type { ScriptLine } from '@/stores/modules/script'
 
 const store = useScriptStore()
+const { logUserAction } = useA2DWebSocket()
 const trackRef = ref<HTMLElement | null>(null)
+
+function onLineClick(line: ScriptLine) {
+  logUserAction('click', `EventTrack line[${line.index}]`, `${line.speaker}: ${line.display_text.slice(0, 40)}`)
+  store.selectLine(line.id)
+}
 
 // Auto-scroll to bottom when new lines arrive (only if user is near bottom)
 watch(() => store.lines.length, () => {

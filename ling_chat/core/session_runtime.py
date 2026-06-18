@@ -46,6 +46,7 @@ class SessionRuntime:
         self.paused: bool = False
         self.stopped: bool = False
         self.batch_size: int = 1
+        self.last_batch_count: int = 0  # lines generated in last _generate_and_synthesize call
 
         # Script data
         self.script_lines: list[ScriptLine] = []

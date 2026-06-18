@@ -6,6 +6,9 @@
       <div class="preview-status">
         <template v-if="store.isThinking">思考中...</template>
         <template v-else>&#x1F50A; 语音合成中...</template>
+        <span v-if="store.batchTotal > 1" class="batch-progress">
+          {{ store.batchIndex }} / {{ store.batchTotal }}
+        </span>
       </div>
     </div>
 
@@ -82,7 +85,7 @@ import { useScriptStore } from '@/stores/modules/script'
 import { useA2DWebSocket } from '@/composables/useA2DWebSocket'
 
 const store = useScriptStore()
-const { sendStart, sendContinue, sendRetry, sendRegenerateTTS } = useA2DWebSocket()
+const { sendStart, sendContinue, sendRetry, sendRegenerateTTS, logUserAction } = useA2DWebSocket()
 
 const editingText = ref('')
 let lastLineId = ''
@@ -121,6 +124,7 @@ function onTextEdited() {
   const line = activeLine.value
   if (line) {
     store.setEdited(line.id, editingText.value)
+    logUserAction('edit', `ReviewPanel line[${line.index}]`, line.id)
   }
 }
 
@@ -149,9 +153,12 @@ function handleContinue() {
   const line = activeLine.value
   if (!line) return
   const originalText = line.display_text
-  const edits = editingText.value !== originalText
+  const hasEdits = editingText.value !== originalText
+  const edits = hasEdits
     ? [{ id: line.id, text: editingText.value }]
     : []
+  logUserAction('continue', `ReviewPanel line[${line.index}]`,
+    hasEdits ? `edited (${editingText.value.length - originalText.length}Δ)` : 'no edits')
   // Persist current edit before sending
   if (userEdited) {
     store.setEdited(line.id, editingText.value)
@@ -205,6 +212,18 @@ function skipTTS() {
   font-size: 13px;
   color: rgba(255, 255, 255, 0.45);
   padding-left: 4px;
+  display: flex;
+  align-items: center;
+  gap: 12px;
+}
+
+.batch-progress {
+  font-size: 12px;
+  color: rgba(74, 144, 217, 0.85);
+  background: rgba(74, 144, 217, 0.12);
+  border: 1px solid rgba(74, 144, 217, 0.25);
+  border-radius: 10px;
+  padding: 2px 8px;
 }
 
 .status-row {

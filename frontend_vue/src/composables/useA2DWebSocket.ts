@@ -94,7 +94,8 @@ export function useA2DWebSocket() {
           break
         }
         case 'tts_ready': {
-          store.setPhase('paused')
+          // Do NOT set paused here — status(paused) from backend signals batch end.
+          // Multi-line batches send tts_ready per line; paused only after the last one.
           const audioPath = msg.payload?.audio_path
           if (audioPath) {
             // audio_path is a URL path like /audio/a2d_xxx.wav
@@ -153,6 +154,16 @@ export function useA2DWebSocket() {
     send({ type: 'a2d.regenerate_tts', payload: { id, text } })
   }
 
+  /** Log user interaction (click, edit) to backend log file via WS. */
+  function logUserAction(action: string, target: string, detail?: string) {
+    send({
+      type: 'a2d.user_action',
+      payload: { action, target, detail: detail || '', timestamp: Date.now() },
+    })
+    // Also log to browser console for immediate visibility
+    console.info(`[A2D-User] ${action} | ${target}${detail ? ' | ' + detail : ''}`)
+  }
+
   function disconnect() {
     if (ws) {
       ws.close()
@@ -172,5 +183,6 @@ export function useA2DWebSocket() {
   return {
     connect, disconnect,
     sendStart, sendContinue, sendRetry, sendRegenerateTTS,
+    logUserAction,
   }
 }

@@ -10,6 +10,8 @@ export interface ScriptLine {
   display_text: string
   tts_text: string
   index: number
+  batch_index?: number
+  batch_total?: number
 }
 
 export interface ErrorInfo {
@@ -38,16 +40,25 @@ export const useScriptStore = defineStore('script', () => {
   const editedText = ref<Record<string, string>>({})
   const activeTab = ref<'review' | 'event'>('review')
 
+  // Batch progress (multi-line generation)
+  const batchIndex = ref(0)
+  const batchTotal = ref(0)
+
   const isThinking = computed(() => phase.value === 'thinking')
   const isTranslating = computed(() => phase.value === 'translating')
   const isSynthesizing = computed(() => phase.value === 'synthesizing')
   const isPaused = computed(() => phase.value === 'paused')
   const hasError = computed(() => phase.value === 'error')
   const isIdle = computed(() => phase.value === 'idle')
+  // True when backend is busy (generating or synthesizing), button should be disabled
+  const isBusy = computed(() => isThinking.value || isTranslating.value || isSynthesizing.value)
 
   function addLine(line: ScriptLine) {
     lines.value.push(line)
     currentLine.value = line
+    // Track batch progress (undefined = single-line or legacy)
+    if (line.batch_index != null) batchIndex.value = line.batch_index
+    if (line.batch_total != null) batchTotal.value = line.batch_total
   }
 
   function setPhase(newPhase: Phase) {
@@ -75,6 +86,8 @@ export const useScriptStore = defineStore('script', () => {
     selectedLineId.value = null
     editedText.value = {}
     activeTab.value = 'review'
+    batchIndex.value = 0
+    batchTotal.value = 0
   }
 
   // ── Cross-tab editor helpers ────────────────────
@@ -105,7 +118,8 @@ export const useScriptStore = defineStore('script', () => {
   return {
     lines, currentLine, phase, error, generationId, consecutiveErrors,
     selectedLineId, editedText, activeTab, selectedLine,
-    isThinking, isTranslating, isSynthesizing, isPaused, hasError, isIdle,
+    batchIndex, batchTotal,
+    isThinking, isTranslating, isSynthesizing, isPaused, hasError, isIdle, isBusy,
     addLine, setPhase, setError, clearError, reset,
     selectLine, setEdited, clearEdited, commitEdits,
   }

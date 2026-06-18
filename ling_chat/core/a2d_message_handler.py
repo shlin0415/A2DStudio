@@ -99,32 +99,41 @@ async def _send_a2d_characters(session, send: SendFn) -> list[dict]:
     return characters
 
 
-async def _generate_and_synthesize(ai_service, send: SendFn) -> str | None:
-    """Generate one script line + synthesize TTS. Returns generation_id or None.
+async def _generate_and_synthesize(ai_service, send: SendFn) -> int:
+    """Generate script lines + synthesize TTS for each. Returns count of generated lines.
 
-    Sends: status(thinking) → script_line → status(synthesizing) → tts_ready → status(paused)
-    On error: sends error message, returns None.
+    Sends: status(thinking) → [script_line → status(synthesizing) → tts_ready]*N → status(paused)
+    On error: pops generated lines from session, sends error message, returns 0.
     """
+    session = ai_service.a2d_session
+    generated = 0
+
     try:
-        # Step 1: Generate text (LLM decides speaker)
+        # Step 1: Generate text (LLM decides speakers, may return 1..N lines)
         await send({"type": "status", "payload": {"phase": "thinking"}})
 
-        session = ai_service.a2d_session
-        result = await ai_service.a2d_generate_next(
+        results = await ai_service.a2d_generate_next(
             scene_suffix=session.build_scene_prompt_suffix()
             if session.scene_config and session.scene_config.scene_description
             else None,
         )
 
-        if not result:
+        if not results:
             raise RuntimeError("LLM returned empty result")
 
-        await send(result)
-        gen_id = result.get("payload", {}).get("id", "")
+        # Step 2: Send each line + synthesize TTS (TTS failure is non-fatal per line)
+        batch_total = len(results)
+        for i, result in enumerate(results):
+            generated += 1
+            # Inject batch progress so frontend can show "2/3" indicator
+            result["payload"]["batch_index"] = i + 1
+            result["payload"]["batch_total"] = batch_total
+            await send(result)
 
-        # Step 2: Synthesize TTS (non-fatal on failure)
-        pl = result.get("payload")
-        if pl:
+            pl = result.get("payload")
+            if not pl:
+                continue
+
             await send({"type": "status", "payload": {"phase": "synthesizing"}})
             try:
                 speaker = pl.get("speaker", "")
@@ -139,7 +148,6 @@ async def _generate_and_synthesize(ai_service, send: SendFn) -> str | None:
                             display_text, speaker
                         )  # sync call — no await
                         # If translation failed, tts_text stays empty → skip TTS
-                        # (never send untranslated text to GSV with wrong text_lang)
 
                 if tts_text:
                     audio_path = await ai_service.a2d_synthesize(
@@ -158,10 +166,16 @@ async def _generate_and_synthesize(ai_service, send: SendFn) -> str | None:
                 logger.warning(f"A2D TTS failed (non-fatal): {tts_e}")
 
         await send({"type": "status", "payload": {"phase": "paused"}})
-        return gen_id
+        session.last_batch_count = generated
+        return generated
 
     except Exception as e:
         logger.error(f"A2D generate+synthesize failed: {e}")
+        # Pop lines that were added in this failed batch
+        for _ in range(generated):
+            if session.script_lines:
+                session.script_lines.pop()
+        session.last_batch_count = 0
         await send({
             "type": "error",
             "payload": {
@@ -173,7 +187,7 @@ async def _generate_and_synthesize(ai_service, send: SendFn) -> str | None:
                 "max_retries": 3,
             },
         })
-        return None
+        return 0
 
 
 # ── Message handlers ──────────────────────────────────────
@@ -215,10 +229,13 @@ async def _handle_continue(ai_service, client_id: str, payload: dict, send: Send
 
 @register("a2d.retry")
 async def _handle_retry(ai_service, client_id: str, payload: dict, send: SendFn):
-    """Regenerate the last line after an error."""
+    """Regenerate the last batch after an error."""
     session = ai_service.a2d_session
-    if session.script_lines:
-        session.script_lines.pop()
+    pop_count = max(session.last_batch_count, 1)
+    for _ in range(pop_count):
+        if session.script_lines:
+            session.script_lines.pop()
+    session.last_batch_count = 0
     await _generate_and_synthesize(ai_service, send)
 
 
@@ -282,6 +299,15 @@ async def _handle_regenerate_tts(ai_service, client_id: str, payload: dict, send
                 "max_retries": 1,
             },
         })
+
+
+@register("a2d.user_action")
+async def _handle_user_action(ai_service, client_id: str, payload: dict, send: SendFn):
+    """Log user interaction (click, edit) from frontend."""
+    action = payload.get("action", "?")
+    target = payload.get("target", "?")
+    detail = payload.get("detail", "")
+    logger.info(f"A2D user action: {action} | target={target} | {detail}")
 
 
 # ── Public API ────────────────────────────────────────────
