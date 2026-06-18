@@ -572,7 +572,17 @@ class AIService:
         not hardcoded. Reuses LingChat format conventions ({旁白}, 【情绪】, <TTS>).
         """
         session = self.a2d_session
-        chars = session.characters
+        # Filter to A2D_STAGE_CHARACTERS env var (belt-and-suspenders: config builder
+        # also filters, but this ensures prompt never includes non-stage characters)
+        import os
+        stage_cfg = os.environ.get("A2D_STAGE_CHARACTERS", "").strip()
+        allowed = {k.strip() for k in stage_cfg.split(",") if k.strip()} if stage_cfg else None
+        all_chars = session.characters
+        chars = (
+            {k: v for k, v in all_chars.items() if k in allowed}
+            if allowed is not None
+            else all_chars
+        )
 
         parts = ["你是一个双人对话生成器。根据以下角色设定生成自然对话。"]
 

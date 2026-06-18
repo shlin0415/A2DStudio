@@ -201,8 +201,8 @@ async def _handle_start(ai_service, client_id: str, payload: dict, send: SendFn)
 
     session = ai_service.a2d_session
 
-    if not session.characters:
-        session.characters = _a2d_build_character_configs(ai_service)
+    # Always rebuild to pick up A2D_STAGE_CHARACTERS env changes
+    session.characters = _a2d_build_character_configs(ai_service)
 
     session.mode = "script"
     session.paused = False

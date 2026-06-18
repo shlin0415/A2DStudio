@@ -237,13 +237,13 @@ class WebSocketManager:
 def _a2d_build_character_configs(ai_service) -> dict:
     """Build CharacterConfig dict by scanning all character directories.
 
-    Scans game_data/characters/ for all subdirectories containing settings.yml,
-    loads each character's configuration, and builds a CharacterConfig keyed by
-    script_role_key.
+    Scans game_data/characters/ for subdirectories, filtered by
+    A2D_STAGE_CHARACTERS env var (comma-separated script_role_keys).
+    If env var is unset/empty, all characters are included.
 
-    This replaces the old approach of reading only ai_service.settings (single
-    character), enabling dual-character A2D sessions.
+    Each config is keyed by script_role_key.
     """
+    import os
     from ling_chat.core.session_runtime import CharacterConfig
     from ling_chat.utils.function import Function
     from ling_chat.utils.runtime_path import user_data_path
@@ -255,11 +255,21 @@ def _a2d_build_character_configs(ai_service) -> dict:
         logger.warning(f"A2D: characters dir not found: {characters_dir}")
         return configs
 
+    # Read stage-character filter from env
+    allowed_keys_raw = os.environ.get("A2D_STAGE_CHARACTERS", "").strip()
+    allowed_keys = (
+        {k.strip() for k in allowed_keys_raw.split(",") if k.strip()}
+        if allowed_keys_raw
+        else None  # None = include all
+    )
+
     for char_dir in sorted(characters_dir.iterdir()):
         if not char_dir.is_dir():
             continue
         if not (char_dir / "settings.yml").exists():
             continue
+
+        folder = char_dir.name
 
         try:
             settings = Function.load_character_settings(char_dir)
@@ -270,6 +280,12 @@ def _a2d_build_character_configs(ai_service) -> dict:
             continue
 
         role_key = getattr(settings, 'script_role_key', None) or char_dir.name
+
+        # Filter: only include characters listed in A2D_STAGE_CHARACTERS
+        if allowed_keys is not None and role_key not in allowed_keys:
+            logger.debug(f"A2D: skipping '{role_key}' (not in A2D_STAGE_CHARACTERS)")
+            continue
+
         folder = char_dir.name
         voice_lang = getattr(
             getattr(settings, 'voice_models', None), 'voice_language', None
