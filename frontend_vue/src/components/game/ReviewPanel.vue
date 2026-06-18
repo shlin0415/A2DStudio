@@ -71,7 +71,11 @@
     </div>
 
     <!-- Idle -->
-    <div v-else class="status-row">
+    <div v-else class="status-row idle-controls">
+      <label class="batch-label">
+        每批句数
+        <input v-model.number="batchSize" type="number" min="1" max="10" class="batch-input" />
+      </label>
       <button class="btn-primary btn-large" @click="handleStart">
         开始对话
       </button>
@@ -86,6 +90,8 @@ import { useA2DWebSocket } from '@/composables/useA2DWebSocket'
 
 const store = useScriptStore()
 const { sendStart, sendContinue, sendRetry, sendRegenerateTTS, logUserAction } = useA2DWebSocket()
+
+const batchSize = ref(1)
 
 const editingText = ref('')
 let lastLineId = ''
@@ -146,7 +152,7 @@ function replayAudio() {
 
 function handleStart() {
   store.reset()
-  sendStart()
+  sendStart({ batchSize: batchSize.value })
 }
 
 function handleContinue() {
@@ -315,6 +321,30 @@ function skipTTS() {
 .btn-large {
   padding: 12px 36px;
   font-size: 18px;
+}
+
+.idle-controls {
+  flex-direction: column;
+  gap: 14px;
+}
+
+.batch-label {
+  font-size: 14px;
+  color: rgba(255, 255, 255, 0.7);
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.batch-input {
+  width: 52px;
+  padding: 4px 6px;
+  border-radius: 6px;
+  border: 1px solid rgba(255, 255, 255, 0.2);
+  background: rgba(255, 255, 255, 0.08);
+  color: #fff;
+  font-size: 15px;
+  text-align: center;
 }
 
 .error-area {

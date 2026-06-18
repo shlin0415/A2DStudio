@@ -107,6 +107,7 @@ async def _generate_and_synthesize(ai_service, send: SendFn) -> int:
     """
     session = ai_service.a2d_session
     generated = 0
+    batch_total = 0  # populated after a2d_generate_next; used for error cleanup
 
     try:
         # Step 1: Generate text (LLM decides speakers, may return 1..N lines)
@@ -171,8 +172,8 @@ async def _generate_and_synthesize(ai_service, send: SendFn) -> int:
 
     except Exception as e:
         logger.error(f"A2D generate+synthesize failed: {e}")
-        # Pop lines that were added in this failed batch
-        for _ in range(generated):
+        # Pop all lines added by a2d_generate_next in this batch.
+        for _ in range(batch_total):
             if session.script_lines:
                 session.script_lines.pop()
         session.last_batch_count = 0
@@ -205,7 +206,8 @@ async def _handle_start(ai_service, client_id: str, payload: dict, send: SendFn)
 
     session.mode = "script"
     session.paused = False
-    session.batch_size = 1
+    bs = payload.get("batch_size", 1)
+    session.batch_size = max(1, int(bs))  # clamp to >= 1
 
     topic = payload.get("topic")
     if topic:
@@ -237,6 +239,14 @@ async def _handle_retry(ai_service, client_id: str, payload: dict, send: SendFn)
             session.script_lines.pop()
     session.last_batch_count = 0
     await _generate_and_synthesize(ai_service, send)
+
+
+@register("a2d.set_batch_size")
+async def _handle_set_batch_size(ai_service, client_id: str, payload: dict, send: SendFn):
+    """Change batch_size at runtime (between batches)."""
+    bs = int(payload.get("batch_size", 1))
+    ai_service.a2d_session.batch_size = max(1, bs)
+    logger.info(f"A2D: batch_size set to {ai_service.a2d_session.batch_size}")
 
 
 @register("a2d.regenerate_tts")

@@ -155,8 +155,12 @@ export function useA2DWebSocket() {
     ws.send(JSON.stringify(msg))
   }
 
-  function sendStart(topic?: string) {
-    send({ type: 'a2d.start', payload: { topic } })
+  function sendStart(opts?: { topic?: string; batchSize?: number }) {
+    send({ type: 'a2d.start', payload: { topic: opts?.topic, batch_size: opts?.batchSize ?? 1 } })
+  }
+
+  function sendSetBatchSize(batchSize: number) {
+    send({ type: 'a2d.set_batch_size', payload: { batch_size: batchSize } })
   }
 
   function sendContinue(edits?: { id: string; text: string }[]) {
@@ -202,7 +206,7 @@ export function useA2DWebSocket() {
 
   return {
     connect, disconnect,
-    sendStart, sendContinue, sendRetry, sendRegenerateTTS,
+    sendStart, sendContinue, sendRetry, sendRegenerateTTS, sendSetBatchSize,
     logUserAction,
   }
 }
