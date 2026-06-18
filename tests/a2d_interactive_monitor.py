@@ -45,6 +45,7 @@ def main():
 
     console_log = []  # (type, text, timestamp)
     store_snapshots = []  # periodic pinia state dumps
+    trace_entries = []  # window.__a2dTrace extracted via page.evaluate
     start_time = time.time()
 
     with sync_playwright() as p:
@@ -72,17 +73,26 @@ def main():
         print("║  Close browser tab to STOP & SAVE   ║")
         print("╚══════════════════════════════════════╝\n")
 
-        # Poll store state every 3s while browser is open
+        # Poll store state every 1s while browser is open (reduced from 3s for finer trace)
         try:
             while True:
                 try:
-                    page.wait_for_timeout(3000)
+                    page.wait_for_timeout(1000)
                     _ = page.title()  # will throw if page closed
                 except Exception:
                     print("\n[monitor] Browser closed — saving logs...")
                     break
 
-                # Snapshot store state
+                # Extract structured trace from window.__a2dTrace ring buffer
+                try:
+                    new_traces = page.evaluate("() => window.__a2dTrace ? window.__a2dTrace.splice(0) : []")
+                    for t in new_traces:
+                        t["_elapsed"] = f"{(t.get('ts', 0) / 1000):.1f}s"
+                        trace_entries.append(t)
+                except Exception:
+                    pass  # page might not have __a2dTrace yet
+
+                # Snapshot store state (with playingLineId for audio sync debugging)
                 try:
                     store = page.evaluate("""
                         () => {
@@ -94,12 +104,15 @@ def main():
                               elapsed: 'PAUSED',
                               presentRoleIds: gs.presentRoleIds || [],
                               scriptPhase: ss.phase || '?',
+                              playingLineId: ss.playingLineId || null,
+                              selectedLineId: ss.selectedLineId || null,
                               scriptLines: (ss.lines || []).map(l => ({
-                                speaker: l.speaker, text: (l.display_text || '').slice(0, 80)
+                                speaker: l.speaker, text: (l.display_text || '').slice(0, 80), id: l.id
                               })),
                               currentLine: ss.currentLine ? {
                                 speaker: ss.currentLine.speaker,
-                                text: (ss.currentLine.display_text || '').slice(0, 80)
+                                text: (ss.currentLine.display_text || '').slice(0, 80),
+                                id: ss.currentLine.id
                               } : null,
                               error: ss.error ? ss.error.message : null,
                             };
@@ -112,10 +125,11 @@ def main():
 
                     phase = store.get("scriptPhase", "?")
                     n_lines = len(store.get("scriptLines", []))
+                    pl_id = (store.get("playingLineId") or "")[-8:]
                     cur = store.get("currentLine")
                     spkr = cur["speaker"] if cur else "-"
                     txt = cur["text"][:40] if cur else "-"
-                    print(f"  [{elapsed}] phase={phase} lines={n_lines} current={spkr}:{txt}")
+                    print(f"  [{elapsed}] phase={phase} lines={n_lines} cur={spkr}:{txt} playId=...{pl_id}")
                 except Exception as e:
                     print(f"  [snapshot error] {e}")
 
@@ -130,7 +144,18 @@ def main():
         f.write(f"# A2D Stage Monitor — {timestamp}\n\n")
         f.write(f"**Duration**: {time.time() - start_time:.0f}s\n\n")
 
-        f.write(f"## Store Snapshots ({len(store_snapshots)})\n\n")
+        # ── Event trace (primary source for sync debugging) ──
+        f.write(f"## Event Trace ({len(trace_entries)} entries)\n\n")
+        if trace_entries:
+            f.write("| ts | event | data |\n")
+            f.write("|----|-------|------|\n")
+            for t in trace_entries:
+                data_str = json.dumps(t.get("data", {}), ensure_ascii=False)[:100]
+                f.write(f"| {t.get('_elapsed', '?')} | **{t.get('event', '?')}** | {data_str} |\n")
+        else:
+            f.write("(No trace entries collected — ensure a2d-trace.ts is loaded)\n")
+
+        f.write(f"\n## Store Snapshots ({len(store_snapshots)})\n\n")
         for s in store_snapshots:
             f.write(f"- **[{s.get('elapsed', '?')}]** phase={s.get('scriptPhase', '?')} ")
             f.write(f"lines={len(s.get('scriptLines', []))} ")

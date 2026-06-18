@@ -1,5 +1,6 @@
 import { defineStore } from 'pinia'
 import { ref, computed } from 'vue'
+import { emitTrace } from '@/utils/a2d-trace'
 
 // ── Types ──────────────────────────────────────────
 
@@ -60,13 +61,17 @@ export const useScriptStore = defineStore('script', () => {
   function addLine(line: ScriptLine) {
     lines.value.push(line)
     currentLine.value = line
+    emitTrace('script_line', { lineId: line.id, speaker: line.speaker, index: line.index })
+    emitTrace('currentLine', { lineId: line.id, index: line.index })
     // Track batch progress (undefined = single-line or legacy)
     if (line.batch_index != null) batchIndex.value = line.batch_index
     if (line.batch_total != null) batchTotal.value = line.batch_total
   }
 
   function setPhase(newPhase: Phase) {
+    const oldPhase = phase.value
     phase.value = newPhase
+    emitTrace('phase_change', { from: oldPhase, to: newPhase })
     // Clear batch progress at start of each batch
     if (newPhase === 'thinking') {
       batchIndex.value = 0

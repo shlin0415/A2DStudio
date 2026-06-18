@@ -1,6 +1,7 @@
 import { onMounted, onUnmounted } from 'vue'
 import { useScriptStore } from '@/stores/modules/script'
 import { useGameStore } from '@/stores/modules/game'
+import { emitTrace } from '@/utils/a2d-trace'
 import type { ScriptLine, ErrorInfo, Phase } from '@/stores/modules/script'
 import type { GameRole } from '@/stores/modules/game/state'
 
@@ -14,7 +15,6 @@ const speakerToRoleId: Record<string, number> = {}
 // ── Audio queue: sequential playback to prevent overlap ────
 const audioQueue: { url: string; lineId: string }[] = []
 let isAudioPlaying = false
-let pendingLineId: string | null = null  // the line whose audio will play next
 
 function playNextInQueue(store?: ReturnType<typeof import('@/stores/modules/script')['useScriptStore']>) {
   if (audioQueue.length === 0) {
@@ -23,19 +23,31 @@ function playNextInQueue(store?: ReturnType<typeof import('@/stores/modules/scri
       store.isAudioPlaying = false
       store.playingLineId = null
     }
+    emitTrace('audio_queue_empty')
     return
   }
   isAudioPlaying = true
   const item = audioQueue.shift()!
+  emitTrace('audio_start', { lineId: item.lineId })
   // Sync subtitle to the line whose audio is about to play
   if (store) {
     store.isAudioPlaying = true
     store.playingLineId = item.lineId
+    emitTrace('playingLine', { lineId: item.lineId })
   }
   const audio = new Audio(item.url)
-  audio.onended = () => playNextInQueue(store)
-  audio.onerror = () => playNextInQueue(store)
-  audio.play().catch(() => playNextInQueue(store))
+  audio.onended = () => {
+    emitTrace('audio_end', { lineId: item.lineId })
+    playNextInQueue(store)
+  }
+  audio.onerror = () => {
+    emitTrace('audio_error', { lineId: item.lineId })
+    playNextInQueue(store)
+  }
+  audio.play().catch(() => {
+    emitTrace('audio_play_failed', { lineId: item.lineId })
+    playNextInQueue(store)
+  })
 }
 
 export function useA2DWebSocket() {
@@ -115,6 +127,7 @@ export function useA2DWebSocket() {
               if (gameStore.gameRoles[roleId]) {
                 gameStore.gameRoles[roleId].emotion = emotion
                 gameStore.gameRoles[roleId].originalEmotion = emotion
+                emitTrace('emotion', { speaker, emotion, lineId: payload.id as string })
               }
             }
           }
@@ -129,6 +142,7 @@ export function useA2DWebSocket() {
               ? `http://${window.location.hostname}:8765${audioPath}`
               : audioPath
             const lineId = (msg.payload?.id as string) || ''
+            emitTrace('audio_queued', { lineId })
             // Queue {url, lineId} for sequential playback + subtitle sync
             audioQueue.push({ url, lineId })
             if (!isAudioPlaying) {
