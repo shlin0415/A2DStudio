@@ -307,7 +307,8 @@ async def _handle_user_action(ai_service, client_id: str, payload: dict, send: S
     action = payload.get("action", "?")
     target = payload.get("target", "?")
     detail = payload.get("detail", "")
-    logger.info(f"A2D user action: {action} | target={target} | {detail}")
+    ts = payload.get("timestamp", "")
+    logger.info(f"A2D user action: {action} | target={target} | {detail} | ts={ts}")
 
 
 # ── Public API ────────────────────────────────────────────

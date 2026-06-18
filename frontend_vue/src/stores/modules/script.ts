@@ -63,6 +63,11 @@ export const useScriptStore = defineStore('script', () => {
 
   function setPhase(newPhase: Phase) {
     phase.value = newPhase
+    // Clear batch progress at start of each batch
+    if (newPhase === 'thinking') {
+      batchIndex.value = 0
+      batchTotal.value = 0
+    }
   }
 
   function setError(err: ErrorInfo) {

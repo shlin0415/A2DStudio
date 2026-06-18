@@ -496,7 +496,7 @@ class AIService:
     async def a2d_generate_next(
         self,
         scene_suffix: str | None = None,
-    ) -> list[dict] | None:
+    ) -> list[dict]:
         """Generate next script lines with LLM (text only, no TTS).
 
         LLM decides who speaks via JSON speaker markers:
@@ -504,7 +504,7 @@ class AIService:
 
         Returns a list of WS-ready dicts (one per parsed line):
           [{ type: "script_line", payload: {id, speaker, display_text, tts_text, index} }, ...]
-        None if LLM returns empty response.
+        Raises RuntimeError if LLM returns no valid script lines.
         """
         import json as json_mod
         from ling_chat.schemas.script_overlay import ScriptLine

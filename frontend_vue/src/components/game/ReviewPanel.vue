@@ -35,10 +35,10 @@
         ></textarea>
       </div>
       <div class="action-row">
-        <button class="btn-secondary" @click="regenerateTTS">
+        <button class="btn-secondary" @click="regenerateTTS" :disabled="store.isBusy">
           &#x267B; 重生成语音
         </button>
-        <button class="btn-primary" @click="handleContinue">
+        <button class="btn-primary" @click="handleContinue" :disabled="store.isBusy">
           &#x2192; 继续
         </button>
       </div>

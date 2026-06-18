@@ -11,6 +11,23 @@ let connected = false
 // speaker-to-roleId mapping built from a2d.characters payload
 const speakerToRoleId: Record<string, number> = {}
 
+// ── Audio queue: sequential playback to prevent overlap ────
+const audioQueue: string[] = []
+let isAudioPlaying = false
+
+function playNextInQueue() {
+  if (audioQueue.length === 0) {
+    isAudioPlaying = false
+    return
+  }
+  isAudioPlaying = true
+  const url = audioQueue.shift()!
+  const audio = new Audio(url)
+  audio.onended = () => playNextInQueue()
+  audio.onerror = () => playNextInQueue()
+  audio.play().catch(() => playNextInQueue())
+}
+
 export function useA2DWebSocket() {
   const store = useScriptStore()
   const WS_URL = `ws://${window.location.hostname}:8765/ws`
@@ -102,9 +119,12 @@ export function useA2DWebSocket() {
             const url = audioPath.startsWith('/')
               ? `http://${window.location.hostname}:8765${audioPath}`
               : audioPath
-            new Audio(url).play().catch(e =>
-              console.error('[A2D] audio play failed', e)
-            )
+            // Queue for sequential playback — prevents overlap when batch_size > 1
+            // or when LLM returns multiple lines despite batch_size=1
+            audioQueue.push(url)
+            if (!isAudioPlaying) {
+              playNextInQueue()
+            }
           }
           break
         }
