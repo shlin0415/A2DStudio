@@ -98,8 +98,12 @@ let lastLineId = ''
 let userEdited = false
 
 // The line currently displayed in the editor:
-// selectedLine (from EventTrack click) takes priority over currentLine (latest generated)
-const activeLine = computed(() => store.selectedLine || store.currentLine)
+// 1. selectedLine (EventTrack click) — user is reviewing a specific line
+// 2. playingLine — audio is playing, subtitle syncs to audio
+// 3. currentLine — latest generated (used during thinking / idle / paused-editing)
+const activeLine = computed(() =>
+  store.selectedLine || store.playingLine || store.currentLine
+)
 
 // Watch for line changes: new generation OR user clicking a timeline line
 watch(activeLine, (line) => {

@@ -44,6 +44,10 @@ export const useScriptStore = defineStore('script', () => {
   const batchIndex = ref(0)
   const batchTotal = ref(0)
 
+  // Audio-subtitle sync: which line's audio is currently playing
+  const playingLineId = ref<string | null>(null)
+  const isAudioPlaying = ref(false)
+
   const isThinking = computed(() => phase.value === 'thinking')
   const isTranslating = computed(() => phase.value === 'translating')
   const isSynthesizing = computed(() => phase.value === 'synthesizing')
@@ -93,6 +97,8 @@ export const useScriptStore = defineStore('script', () => {
     activeTab.value = 'review'
     batchIndex.value = 0
     batchTotal.value = 0
+    playingLineId.value = null
+    isAudioPlaying.value = false
   }
 
   // ── Cross-tab editor helpers ────────────────────
@@ -120,10 +126,16 @@ export const useScriptStore = defineStore('script', () => {
     return lines.value.find(l => l.id === selectedLineId.value) || null
   })
 
+  // The line currently being spoken (audio-synced during playback)
+  const playingLine = computed(() => {
+    if (!playingLineId.value) return null
+    return lines.value.find(l => l.id === playingLineId.value) || null
+  })
+
   return {
     lines, currentLine, phase, error, generationId, consecutiveErrors,
     selectedLineId, editedText, activeTab, selectedLine,
-    batchIndex, batchTotal,
+    batchIndex, batchTotal, playingLineId, isAudioPlaying, playingLine,
     isThinking, isTranslating, isSynthesizing, isPaused, hasError, isIdle, isBusy,
     addLine, setPhase, setError, clearError, reset,
     selectLine, setEdited, clearEdited, commitEdits,

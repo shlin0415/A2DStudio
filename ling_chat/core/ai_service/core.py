@@ -667,7 +667,7 @@ class AIService:
         prompt_lines.append("- speaker 使用上面定义的 speaker_id")
         prompt_lines.append("- 【情绪】方括号内为情绪标签")
         prompt_lines.append(f"- <TTS朗读文本> 尖括号内为TTS朗读文本，{tts_instruction}")
-        prompt_lines.append("- （动作描述）必须放在句末，不要插在句子中间")
+        prompt_lines.append("- （动作描述）必须放在句末，不要插在句子中间，严禁单独成行输出")
         prompt_lines.append("- 根据对话流向选择最合适的发言者，用自然的对话节奏，不需要严格交替")
         char_names = [cfg.character_folder for cfg in chars.values()]
         if len(char_names) > 1:
@@ -812,6 +812,18 @@ class AIService:
         text = raw_text.strip()
         if not text:
             return None
+
+        # Pure action line: entire content is （...）with no dialogue.
+        # LLM sometimes splits actions onto separate lines when batch_size > 1.
+        # Treat as narration — no emotion, no TTS.
+        if re.match(r"^（.+?）$", text):
+            return ScriptLine(
+                speaker="narrator",
+                emotion="",
+                display_text=text,
+                tts_text="",  # empty = skip TTS
+                state="approved",
+            )
 
         # Parse: 【emotion】content<TTS>（action）
         emotion_match = re.match(r"^【(.+?)】", text)

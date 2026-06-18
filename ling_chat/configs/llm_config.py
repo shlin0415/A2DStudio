@@ -322,10 +322,22 @@ class LLMConfig:
         return self._config.copy()
 
     def get_main_config(self) -> Dict[str, Any]:
-        """获取主对话模型配置（合入默认值，新键自动补全）"""
+        """获取主对话模型配置（合入默认值，新键自动补全）
+
+        Env vars override TOML values so .env changes take effect on restart
+        without needing to delete the cached TOML.
+        """
         config = self._config.get("main", {})
         defaults = self._create_default_config()["main"]
-        return {**defaults, **config}
+        merged = {**defaults, **config}
+
+        # Env overrides: .env is the authoritative source for sensitive keys.
+        # CHAT_API_KEY / MODEL_TYPE / CHAT_BASE_URL override cached TOML.
+        _apply_env_override(merged, "api_key", "CHAT_API_KEY")
+        _apply_env_override(merged, "model", "MODEL_TYPE")
+        _apply_env_override(merged, "base_url", "CHAT_BASE_URL")
+
+        return merged
 
     def get_translator_config(self) -> Dict[str, Any]:
         """获取翻译模型配置
@@ -452,6 +464,13 @@ class LLMConfig:
         self._load_active()
         self._notify_reload()
         logger.info(f"已重载LLM配置: {self._active_config_name}")
+
+
+def _apply_env_override(config: dict, key: str, env_var: str) -> None:
+    """Override config[key] with os.environ[env_var] if the env var is set (non-empty)."""
+    value = os.environ.get(env_var, "").strip()
+    if value:
+        config[key] = value
 
 
 # 单例实例

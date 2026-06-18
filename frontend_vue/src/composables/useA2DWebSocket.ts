@@ -12,20 +12,30 @@ let connected = false
 const speakerToRoleId: Record<string, number> = {}
 
 // ── Audio queue: sequential playback to prevent overlap ────
-const audioQueue: string[] = []
+const audioQueue: { url: string; lineId: string }[] = []
 let isAudioPlaying = false
+let pendingLineId: string | null = null  // the line whose audio will play next
 
-function playNextInQueue() {
+function playNextInQueue(store?: ReturnType<typeof import('@/stores/modules/script')['useScriptStore']>) {
   if (audioQueue.length === 0) {
     isAudioPlaying = false
+    if (store) {
+      store.isAudioPlaying = false
+      store.playingLineId = null
+    }
     return
   }
   isAudioPlaying = true
-  const url = audioQueue.shift()!
-  const audio = new Audio(url)
-  audio.onended = () => playNextInQueue()
-  audio.onerror = () => playNextInQueue()
-  audio.play().catch(() => playNextInQueue())
+  const item = audioQueue.shift()!
+  // Sync subtitle to the line whose audio is about to play
+  if (store) {
+    store.isAudioPlaying = true
+    store.playingLineId = item.lineId
+  }
+  const audio = new Audio(item.url)
+  audio.onended = () => playNextInQueue(store)
+  audio.onerror = () => playNextInQueue(store)
+  audio.play().catch(() => playNextInQueue(store))
 }
 
 export function useA2DWebSocket() {
@@ -115,15 +125,14 @@ export function useA2DWebSocket() {
           // Multi-line batches send tts_ready per line; paused only after the last one.
           const audioPath = msg.payload?.audio_path
           if (audioPath) {
-            // audio_path is a URL path like /audio/a2d_xxx.wav
             const url = audioPath.startsWith('/')
               ? `http://${window.location.hostname}:8765${audioPath}`
               : audioPath
-            // Queue for sequential playback — prevents overlap when batch_size > 1
-            // or when LLM returns multiple lines despite batch_size=1
-            audioQueue.push(url)
+            const lineId = (msg.payload?.id as string) || ''
+            // Queue {url, lineId} for sequential playback + subtitle sync
+            audioQueue.push({ url, lineId })
             if (!isAudioPlaying) {
-              playNextInQueue()
+              playNextInQueue(store)
             }
           }
           break

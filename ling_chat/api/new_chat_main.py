@@ -100,7 +100,7 @@ class WebSocketManager:
                     logger.info(f"成就 {achievement_id} 解锁失败或已解锁，不发送通知")
             else:
                 logger.warning("收到没有ID的成就解锁请求")
-        elif message_type in ("a2d.start", "a2d.continue", "a2d.retry", "a2d.regenerate_tts"):
+        elif message_type.startswith("a2d."):
             await self._handle_a2d_message(client_id, message_type, message)
         else:
             logger.warning(f"未知消息类型: {message_type}")
