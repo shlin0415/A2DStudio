@@ -159,4 +159,5 @@ tmp/
 experience/
 .trash/
 .humanize/
-time-action-record.mdbash.exe.stackdump
+time-action-record.md
+bash.exe.stackdump
