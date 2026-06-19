@@ -156,7 +156,8 @@ def page(full_stack, request):
         browser = p.chromium.launch(headless=not headed)
         ctx_page = browser.new_page(viewport={"width": 1280, "height": 720})
 
-        ctx_page.on("console", lambda msg: None)  # swallow, test accesses via trace
+        ctx_page._console_msgs = []
+        ctx_page.on("console", lambda msg: ctx_page._console_msgs.append(msg.text))
 
         ctx_page.goto(STAGE_URL)
         ctx_page.wait_for_load_state("networkidle")
