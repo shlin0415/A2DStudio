@@ -100,38 +100,41 @@ async def _send_a2d_characters(session, send: SendFn) -> list[dict]:
 
 
 async def _generate_and_synthesize(ai_service, send: SendFn) -> int:
-    """Generate script lines + synthesize TTS for each. Returns count of generated lines.
+    """Generate script lines + synthesize TTS. Iterates batch_size times,
+    calling LLM once per line (batch_size=1 × N iterations).
 
-    Sends: status(thinking) → [script_line → status(synthesizing) → tts_ready]*N → status(paused)
-    On error: pops generated lines from session, sends error message, returns 0.
+    Sends per iteration: status(thinking) → script_line → status(synthesizing) → tts_ready
+    Final: status(paused)
+    On error: pops generated lines, sends error message, returns 0.
     """
     session = ai_service.a2d_session
     generated = 0
-    batch_total = 0  # populated after a2d_generate_next; used for error cleanup
+    batch_total = session.batch_size
 
     try:
-        # Step 1: Generate text (LLM decides speakers, may return 1..N lines)
-        await send({"type": "status", "payload": {"phase": "thinking"}})
+        for i in range(batch_total):
+            if session.stopped:
+                break
 
-        results = await ai_service.a2d_generate_next(
-            scene_suffix=session.build_scene_prompt_suffix()
-            if session.scene_config and session.scene_config.scene_description
-            else None,
-        )
+            # Step 1: Generate one line (LLM returns exactly 1 line)
+            await send({"type": "status", "payload": {"phase": "thinking"}})
 
-        if not results:
-            raise RuntimeError("LLM returned empty result")
+            result = await ai_service.a2d_generate_one(
+                scene_suffix=session.build_scene_prompt_suffix()
+                if session.scene_config and session.scene_config.scene_description
+                else None,
+            )
 
-        # Log raw LLM response for monitor extraction (truncated to 2000 chars)
-        raw_preview = session.last_raw_llm_response[:2000]
-        logger.info(f"A2D LLM raw response ({len(session.last_raw_llm_response)} chars):\n{raw_preview}")
+            if not result:
+                break  # LLM ended conversation or returned nothing
 
-        # Step 2: Send each line + synthesize TTS (TTS failure is non-fatal per line)
-        batch_total = len(results)
-        for i, result in enumerate(results):
+            # Log raw LLM response for monitor extraction
+            raw_preview = session.last_raw_llm_response[:2000]
+            logger.info(f"A2D LLM raw response ({len(session.last_raw_llm_response)} chars):\n{raw_preview}")
+
+            # Inject batch progress
             generated += 1
-            # Inject batch progress so frontend can show "2/3" indicator
-            result["payload"]["batch_index"] = i + 1
+            result["payload"]["batch_index"] = generated
             result["payload"]["batch_total"] = batch_total
             await send(result)
 
@@ -139,20 +142,19 @@ async def _generate_and_synthesize(ai_service, send: SendFn) -> int:
             if not pl:
                 continue
 
+            # Step 2: Synthesize TTS (non-fatal per line)
             await send({"type": "status", "payload": {"phase": "synthesizing"}})
             try:
                 speaker = pl.get("speaker", "")
                 tts_text = pl.get("tts_text", "")
                 display_text = pl.get("display_text", "")
 
-                # Translate if tts_text is empty or same as display_text (edited lines)
                 cfg = session.characters.get(speaker) if speaker else None
                 if cfg and cfg.voice_language != cfg.display_language:
                     if not tts_text or tts_text == display_text:
                         tts_text = ai_service._a2d_translate_for_tts(
                             display_text, speaker
-                        )  # sync call — no await
-                        # If translation failed, tts_text stays empty → skip TTS
+                        )
 
                 if tts_text:
                     audio_path = await ai_service.a2d_synthesize(
@@ -176,8 +178,8 @@ async def _generate_and_synthesize(ai_service, send: SendFn) -> int:
 
     except Exception as e:
         logger.error(f"A2D generate+synthesize failed: {e}")
-        # Pop all lines added by a2d_generate_next in this batch.
-        for _ in range(batch_total):
+        # Pop generated lines from session
+        for _ in range(generated):
             if session.script_lines:
                 session.script_lines.pop()
         session.last_batch_count = 0

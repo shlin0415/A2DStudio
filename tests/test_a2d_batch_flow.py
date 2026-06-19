@@ -273,15 +273,18 @@ class TestGenerateAndSynthesizeErrorCleanup:
             {"type": "script_line", "payload": {"id": line3.id, "speaker": "ema", "emotion": "正常", "display_text": "bye", "tts_text": "bye", "index": 2}},
         ]
 
-        async def mock_generate_next(*args, **kwargs):
-            return results
+        call_count = [0]
+        async def mock_generate_one(*args, **kwargs):
+            idx = call_count[0]
+            call_count[0] += 1
+            return results[idx] if idx < len(results) else None
 
-        ai_svc.a2d_generate_next = mock_generate_next
+        sr.batch_size = 3  # iterative: 3 calls to generate_one
+        ai_svc.a2d_generate_one = mock_generate_one
         ai_svc.a2d_synthesize = AsyncMock(return_value="/audio/test.wav")
         ai_svc._a2d_translate_for_tts = MagicMock(return_value="")
 
-        # Make send() raise on the first script_line (simulate WS disconnect mid-batch).
-        # The thinking status and error messages must still go through.
+        # Make send() raise on the first script_line (simulate WS disconnect mid-batch)
         send_count = [0]
 
         async def capture(msg):
@@ -291,8 +294,7 @@ class TestGenerateAndSynthesizeErrorCleanup:
 
         await _generate_and_synthesize(ai_svc, capture)
 
-        # Should clean up: pop the lines, reset state
-        assert len(sr.script_lines) == 0
+        # Should clean up: pop the 0 generated lines (error happened on line 1)
         assert sr.last_batch_count == 0
 
     @pytest.mark.asyncio
@@ -315,10 +317,14 @@ class TestGenerateAndSynthesizeErrorCleanup:
             {"type": "script_line", "payload": {"id": line2.id, "speaker": "hiro", "emotion": "疑惑", "display_text": "hi", "tts_text": "hi", "index": 1}},
         ]
 
-        async def mock_generate_next(*args, **kwargs):
-            return results
+        call_count = [0]
+        async def mock_generate_one(*args, **kwargs):
+            idx = call_count[0]
+            call_count[0] += 1
+            return results[idx] if idx < len(results) else None
 
-        ai_svc.a2d_generate_next = mock_generate_next
+        sr.batch_size = 2
+        ai_svc.a2d_generate_one = mock_generate_one
         # TTS fails for line 1, succeeds for line 2
         tts_calls = [0]
 

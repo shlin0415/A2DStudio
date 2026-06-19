@@ -493,18 +493,15 @@ class AIService:
 
     # ── A2D Studio: Script Editor Methods ─────────────────────────
 
-    async def a2d_generate_next(
+    async def a2d_generate_one(
         self,
         scene_suffix: str | None = None,
-    ) -> list[dict]:
-        """Generate next script lines with LLM (text only, no TTS).
+    ) -> dict | None:
+        """Generate exactly one script line. Call N times for batch_size=N.
 
-        LLM decides who speaks via JSON speaker markers:
-          {"speaker":"ema"}\\n【高兴】text<TTS_text>（动作）
-
-        Returns a list of WS-ready dicts (one per parsed line):
-          [{ type: "script_line", payload: {id, speaker, display_text, tts_text, index} }, ...]
-        Raises RuntimeError if LLM returns no valid script lines.
+        LLM outputs one line: {"speaker":"ema"}\\n【高兴】text<TTS_text>（action）
+        Returns a WS-ready dict: {type: "script_line", payload: {id, speaker, ...}}
+        Returns None if LLM returns no valid line.
         """
         import json as json_mod
         from ling_chat.schemas.script_overlay import ScriptLine
@@ -520,17 +517,16 @@ class AIService:
         # Store verbatim LLM response for monitor/debugging
         session.last_raw_llm_response = full_text
 
-        # Parse LLM response — LLM decides speaker via JSON markers
+        # Parse exactly one speaker marker + one dialogue line
         first_key = list(session.characters.keys())[0]
         current_speaker = first_key
-        lines = []
 
         for raw_line in full_text.split("\n"):
             raw_line = raw_line.strip()
             if not raw_line:
                 continue
 
-            # Check for speaker marker: {"speaker":"ema"}
+            # Speaker marker: {"speaker":"ema"}
             try:
                 if raw_line.startswith("{") and '"speaker"' in raw_line:
                     marker = json_mod.loads(raw_line)
@@ -545,45 +541,30 @@ class AIService:
             line = self._a2d_parse_script_line(raw_line, current_speaker)
             if line:
                 if line.speaker == "narrator":
-                    # Pure action line — merge into previous line's raw_text
-                    # to preserve KV-cache-friendly verbatim LLM output format
-                    if lines:
-                        prev = lines[-1]
+                    # Pure action line from LLM — merge into previous line's raw_text
+                    script_lines = session.script_lines
+                    if script_lines:
+                        prev = script_lines[-1]
                         prev.raw_text = (prev.raw_text or "") + "\n" + raw_line
-                        # Sync session copy too
-                        sid = prev.id  # ScriptLine id (UUID string)
-                        for sl in session.script_lines:
-                            if sl.id == sid:
-                                sl.raw_text = prev.raw_text
-                                break
+                        continue  # Don't create a new ScriptLine
                     else:
-                        # First line in batch is action — keep as narrator (fallback)
                         session.add_line(line)
-                        lines.append(line)
                 else:
                     session.add_line(line)
-                    lines.append(line)
 
-        if not lines:
-            raise RuntimeError(
-                f"LLM returned no valid script lines. Raw: {full_text[:300]}"
-            )
+                return {
+                    "type": "script_line",
+                    "payload": {
+                        "id": line.id,
+                        "speaker": line.speaker,
+                        "emotion": line.emotion,
+                        "display_text": line.display_text,
+                        "tts_text": line.tts_text,
+                        "index": line.index,
+                    },
+                }
 
-        # Return all parsed lines (len(lines) drives downstream; never hardcode batch_size)
-        return [
-            {
-                "type": "script_line",
-                "payload": {
-                    "id": line.id,
-                    "speaker": line.speaker,
-                    "emotion": line.emotion,
-                    "display_text": line.display_text,
-                    "tts_text": line.tts_text,
-                    "index": line.index,
-                },
-            }
-            for line in lines
-        ]
+        return None  # No valid line found
 
     def _a2d_build_system_prompt(self, scene_suffix: str | None = None) -> str:
         """Build system prompt with character configs, scene, and knowledge.
@@ -639,8 +620,7 @@ class AIService:
 你对每句话的回应要符合格式：【情绪】显示文本<TTS朗读文本>（动作描述）
 - 【情绪】内为情绪标签，从以下选择：高兴、兴奋、生气、厌恶、无语、疑惑、慌张、担心、紧张、害怕、害羞、认真、调皮、尴尬、难为情、惊讶、心动、哭泣、自信、无奈
 - <TTS朗读文本> 尖括号内为语音合成朗读文本，可省略
-- （动作描述）单独占一行，放在对应的对话之后，纯动作行以（开头以）结尾，不包含任何对话内容
-- TTS朗读文本中不要包含动作描述
+- （动作描述）放在对话末尾，同一行内。TTS朗读文本中绝对不要包含动作描述
 - 不使用颜文字，每句话保持完整断句""")
 
         # ── A2D dual-character rules ───────────────────────
@@ -668,27 +648,19 @@ class AIService:
             tts_instruction = "可省略<TTS文本>（显示语言与TTS语言相同）。"
 
         prompt_lines = []
-        batch = session.batch_size
         prompt_lines.append("## 发言输出格式")
-        if batch == 1:
-            prompt_lines.append("每次生成一句对话。根据对话上下文，选择一个合适的角色发言。")
-        else:
-            prompt_lines.append(f"每次生成{batch}句对话。根据对话上下文，选择角色发言。")
-        prompt_lines.append("每句话先标注说话者，然后使用标准格式：")
+        prompt_lines.append("每次生成一句对话。根据对话上下文，选择一个合适的角色发言。")
+        prompt_lines.append("先标注说话者，然后使用标准格式：")
         prompt_lines.append("")
         prompt_lines.append('{"speaker":"ema"}')
         prompt_lines.append("【情绪】显示文本<TTS朗读文本>（动作描述）")
         prompt_lines.append("")
         prompt_lines.append("规则：")
-        if batch == 1:
-            prompt_lines.append("- 每次输出一个 speaker 标记和一个发言")
-        else:
-            prompt_lines.append(f"- 每次输出 {batch} 组 speaker 标记和发言，每组一行 speaker 标记 + 一行发言")
         prompt_lines.append("- speaker 使用上面定义的 speaker_id")
-        prompt_lines.append("- 【情绪】方括号内为情绪标签")
-        prompt_lines.append(f"- <TTS朗读文本> 尖括号内为TTS朗读文本，{tts_instruction}")
-        prompt_lines.append("- （动作描述）单独占一行，放在对应的对话之后，纯动作描述行以（开头以）结尾，不包含任何对话内容")
-        prompt_lines.append("- 根据对话流向选择最合适的发言者，用自然的对话节奏，不需要严格交替")
+        prompt_lines.append("- 【情绪】方括号内为情绪标签，从给定列表中选择")
+        prompt_lines.append(f"- <TTS朗读文本> 尖括号内为TTS语音合成文本，{tts_instruction}")
+        prompt_lines.append("- （动作描述）放在对话末尾，同一行内。TTS朗读文本中绝对不要包含动作描述")
+        prompt_lines.append("- 根据对话流向选择最合适的发言者，用自然的对话节奏")
         char_names = [cfg.character_folder for cfg in chars.values()]
         if len(char_names) > 1:
             prompt_lines.append("- 交替让角色发言，不要连续让同一个角色说话")
