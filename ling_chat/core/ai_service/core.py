@@ -552,7 +552,7 @@ class AIService:
                         prev.raw_text = (prev.raw_text or "") + "\n" + raw_line
                         # Sync session copy too
                         sid = prev.id  # ScriptLine id (UUID string)
-                        for sl in session.lines:
+                        for sl in session.script_lines:
                             if sl.id == sid:
                                 sl.raw_text = prev.raw_text
                                 break

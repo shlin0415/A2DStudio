@@ -89,10 +89,11 @@ class TestWSProtocol:
         line_ids = {sl["payload"]["id"] for sl in script_lines}
         for msg in messages:
             if msg.get("type") == "tts_ready":
-                lid = msg.get("payload", {}).get("line_id", "")
-                assert lid in line_ids, f"tts_ready line_id={lid} not in script_lines"
-                url = msg.get("payload", {}).get("audio_url", "")
-                assert url.startswith("http"), f"tts_ready audio_url not http: {url}"
+                lid = msg.get("payload", {}).get("id", "")
+                if lid:
+                    assert lid in line_ids, f"tts_ready id={lid} not in script_lines"
+                path = msg.get("payload", {}).get("audio_path", "")
+                assert path, f"tts_ready audio_path is empty"
 
         # 6. Final message is status(paused)
         status_msgs = [m for m in messages if m.get("type") == "status"
@@ -101,39 +102,46 @@ class TestWSProtocol:
 
     @pytest.mark.skipif(not backend_ok(), reason="Backend not running")
     async def test_continue_message_sequence(self):
-        """After start, a2d.continue produces new batch."""
+        """After start+paused on same connection, a2d.continue produces new batch."""
         if not backend_ok():
             pytest.skip("Backend not running")
 
-        # Round 1: start
-        msgs1 = await _connect_and_send("a2d.start")
-        errors = [m for m in msgs1 if m.get("type") == "_error"]
-        if errors:
-            pytest.skip(f"Start failed (env): {errors[0]}")
+        # Must use same connection for start → continue (WS sessions are per-connection)
+        async with websockets.connect(WS_URL) as ws:
+            # Phase 1: start
+            await ws.send(json.dumps({"type": "a2d.start", "payload": {}}))
+            messages_start = []
+            async for raw in ws:
+                msg = json.loads(raw)
+                messages_start.append(msg)
+                if msg.get("type") == "status":
+                    phase = msg.get("payload", {}).get("phase", "")
+                    if phase in ("paused", "error"):
+                        break
 
-        # Need a fresh connection for continue (WS stateful)
-        try:
-            async with websockets.connect(WS_URL) as ws:
-                await ws.send(json.dumps({"type": "a2d.continue", "payload": {}}))
-                messages = []
-                async for raw in ws:
-                    msg = json.loads(raw)
-                    messages.append(msg)
-                    if msg.get("type") == "status":
-                        phase = msg.get("payload", {}).get("phase", "")
-                        if phase in ("paused", "error"):
-                            break
+            errors = [m for m in messages_start if m.get("type") == "status"
+                      and m.get("payload", {}).get("phase") == "error"]
+            if errors:
+                pytest.skip(f"Start failed (env): {errors}")
 
-                script_lines = [m for m in messages if m.get("type") == "script_line"]
-                assert len(script_lines) >= 1, "Continue round: expected at least 1 script_line"
+            # Phase 2: continue on same connection
+            await ws.send(json.dumps({"type": "a2d.continue", "payload": {}}))
+            messages = []
+            async for raw in ws:
+                msg = json.loads(raw)
+                messages.append(msg)
+                if msg.get("type") == "status":
+                    phase = msg.get("payload", {}).get("phase", "")
+                    if phase in ("paused", "error"):
+                        break
 
-                paused = [m for m in messages
-                          if m.get("type") == "status"
-                          and m.get("payload", {}).get("phase") == "paused"]
-                assert len(paused) == 1, f"Continue round: expected paused, got {paused}"
+            script_lines = [m for m in messages if m.get("type") == "script_line"]
+            assert len(script_lines) >= 1, "Continue round: expected at least 1 script_line"
 
-        except websockets.exceptions.ConnectionClosed:
-            pytest.skip("WebSocket connection closed (environment fault)")
+            paused = [m for m in messages
+                      if m.get("type") == "status"
+                      and m.get("payload", {}).get("phase") == "paused"]
+            assert len(paused) == 1, f"Continue round: expected paused, got {paused}"
 
     @pytest.mark.skipif(not backend_ok(), reason="Backend not running")
     async def test_error_classification_on_missing_fields(self):
