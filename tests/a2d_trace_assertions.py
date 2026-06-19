@@ -192,7 +192,7 @@ def assert_has_script_lines(events: list[dict]) -> list[str]:
 # ── Error classification ──────────────────────────────
 
 ENV_FAULT_KEYWORDS = ["401", "timeout", "timed out", "Connection refused",
-                       "ReadTimeout", "ConnectError", "TTS请求失败"]
+                       "ReadTimeout", "ConnectError", "TTS请求失败", "503"]
 
 
 def classify_errors(errors: list[str]) -> Tuple[list[str], list[str]]:

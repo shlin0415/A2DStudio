@@ -39,7 +39,18 @@ def frontend_ok() -> bool:
 # ── Trace / Store extraction helpers (used by E2E tests) ──
 
 def extract_trace(page) -> list[dict]:
-    """Extract and drain window.__a2dTrace entries. Returns parsed list."""
+    """Copy all window.__a2dTrace entries without draining. Returns parsed list."""
+    try:
+        raw = page.evaluate("() => window.__a2dTrace ? window.__a2dTrace.slice(0) : []")
+        if isinstance(raw, list):
+            return [dict(e) if isinstance(e, dict) else e for e in raw]
+        return []
+    except Exception:
+        return []
+
+
+def drain_trace(page) -> list[dict]:
+    """Extract and DRAIN window.__a2dTrace entries (use for periodic polling)."""
     try:
         raw = page.evaluate("() => window.__a2dTrace ? window.__a2dTrace.splice(0) : []")
         if isinstance(raw, list):

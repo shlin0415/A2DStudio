@@ -21,7 +21,7 @@ import pytest
 
 from tests import (
     PROJECT_ROOT, BACKEND_URL, FRONTEND_URL, STAGE_URL, WS_URL,
-    backend_ok, frontend_ok, extract_trace, extract_store, wait_for_ws,
+    backend_ok, frontend_ok, extract_trace, drain_trace, extract_store, wait_for_ws,
 )
 
 BACKEND_LOG = PROJECT_ROOT / "tmp" / "backend-monitor.log"
@@ -61,7 +61,7 @@ def frontend_running():
 
 # ── Process management ────────────────────────────────
 def _kill_port(port: int) -> None:
-    """Kill any process listening on the given port (Windows)."""
+    """Kill any process listening on the given port, including child processes (Windows)."""
     try:
         result = subprocess.run(
             ["cmd", "/c", f"netstat -ano | findstr :{port} | findstr LISTENING"],
@@ -73,7 +73,8 @@ def _kill_port(port: int) -> None:
             parts = line.strip().split()
             if parts:
                 pid = parts[-1]
-                subprocess.run(["taskkill", "/F", "/PID", pid],
+                # /T kills child processes too (prevents orphaned Vite/esbuild)
+                subprocess.run(["taskkill", "/T", "/F", "/PID", pid],
                                capture_output=True, timeout=5)
     except Exception:
         pass

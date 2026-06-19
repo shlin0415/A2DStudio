@@ -15,7 +15,7 @@ import time
 import pytest
 from pathlib import Path
 
-from tests import backend_ok, frontend_ok, extract_trace, extract_store
+from tests import backend_ok, frontend_ok, extract_trace, drain_trace, extract_store
 from tests.a2d_trace_assertions import (
     assert_phase_sequence, assert_speaker_filter, assert_batch_integrity,
     assert_audio_sync, assert_has_script_lines, classify_test_result,
@@ -106,6 +106,7 @@ class TestFullDialogueFlow:
         target_rounds = 2 if fast_mode else ROUND_COUNT
 
         completed_rounds = 0
+        all_traces: list[dict] = []  # accumulate across rounds for cross-round assertions
 
         for r in range(target_rounds):
             # Click appropriate button
@@ -140,11 +141,13 @@ class TestFullDialogueFlow:
                 else:
                     pytest.skip(f"Round {r+1} timeout at phase {phase} (env fault)")
 
-            # Per-round trace assertions
-            trace = extract_trace(page)
+            # Per-round trace: drain (reset per round) then extract (non-draining)
+            round_trace = drain_trace(page)
+            all_traces.extend(round_trace)
+
             errors = []
-            errors += assert_phase_sequence(trace)
-            errors += assert_has_script_lines(trace)
+            errors += assert_phase_sequence(round_trace)
+            errors += assert_has_script_lines(round_trace)
 
             result = classify_test_result(errors)
             if result == "FAIL":
@@ -154,12 +157,11 @@ class TestFullDialogueFlow:
 
             completed_rounds += 1
 
-        # Final cross-round trace extraction
-        trace = extract_trace(page)
+        # Cross-round assertions on accumulated traces from ALL rounds
         errors = []
-        errors += assert_speaker_filter(trace)
-        errors += assert_audio_sync(trace)
-        errors += assert_batch_integrity(trace)
+        errors += assert_speaker_filter(all_traces)
+        errors += assert_audio_sync(all_traces)
+        errors += assert_batch_integrity(all_traces)
 
         result = classify_test_result(errors)
         if result == "FAIL":
