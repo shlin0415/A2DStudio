@@ -21,17 +21,17 @@ WS_URL = "ws://localhost:8765/ws"
 def backend_ok() -> bool:
     """Backend HTTP server reachable (any response = up)."""
     try:
-        httpx.get(BACKEND_URL, timeout=3)
+        httpx.get(BACKEND_URL, timeout=3, proxy=None)  # bypass global proxy for localhost
         return True
     except Exception:
         return False
 
 
 def frontend_ok() -> bool:
-    """Frontend dev server reachable with HTTP 200."""
+    """Frontend dev server reachable (any response = up)."""
     try:
-        r = httpx.get(FRONTEND_URL, timeout=3)
-        return r.status_code == 200
+        r = httpx.get(FRONTEND_URL, timeout=3, proxy=None)  # bypass global proxy for localhost
+        return r.status_code < 600  # any HTTP response means server is up
     except Exception:
         return False
 

@@ -102,6 +102,7 @@ def _start_frontend() -> subprocess.Popen:
         cwd=str(frontend_dir),
         stdout=open(PROJECT_ROOT / "tmp" / "vite-monitor.log", "w", encoding="utf-8"),
         stderr=subprocess.STDOUT,
+        env={**os.environ},
     )
     return proc
 
@@ -119,28 +120,37 @@ def _wait_for_health(timeout: int = 120) -> bool:
 # ── Full-stack session fixture ────────────────────────
 @pytest.fixture(scope="session")
 def full_stack(request):
-    """Start backend + frontend for the test session. GSV assumed running."""
+    """Start backend + frontend for the test session. GSV assumed running.
+
+    If services are already running, reuse them — don't kill and restart.
+    """
     if not request.config.getoption("--e2e"):
         env_enabled = os.environ.get("A2D_E2E_FULLSTACK", "").strip() in ("1", "true", "yes")
         if not env_enabled:
             pytest.skip("Full stack not requested (use --e2e or A2D_E2E_FULLSTACK=1)")
 
-    backend_proc = _start_backend()
-    frontend_proc = _start_frontend()
+    backend_already_up = backend_ok()
+    frontend_already_up = frontend_ok()
+
+    backend_proc = None if backend_already_up else _start_backend()
+    frontend_proc = None if frontend_already_up else _start_frontend()
 
     if not _wait_for_health():
-        backend_proc.terminate()
-        frontend_proc.terminate()
+        for proc in (backend_proc, frontend_proc):
+            if proc:
+                proc.terminate()
         pytest.skip("Backend or frontend failed to start within timeout")
 
     yield
 
+    # Only terminate processes we started (don't kill manually-started services)
     for proc in (backend_proc, frontend_proc):
-        try:
-            proc.terminate()
-            proc.wait(timeout=10)
-        except Exception:
-            pass
+        if proc:
+            try:
+                proc.terminate()
+                proc.wait(timeout=10)
+            except Exception:
+                pass
 
 
 # ── Playwright page fixture ───────────────────────────
