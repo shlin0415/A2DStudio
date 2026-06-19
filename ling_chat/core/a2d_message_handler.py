@@ -103,16 +103,20 @@ async def _generate_and_synthesize(ai_service, send: SendFn) -> int:
     """Generate script lines + synthesize TTS. Iterates batch_size times,
     calling LLM once per line (batch_size=1 × N iterations).
 
-    Sends per iteration: status(thinking) → script_line → status(synthesizing) → tts_ready
+    Collects all results first so batch_total reflects actual script_line count
+    (not iteration count — merged action lines reduce the count). Then sends
+    each line with correct batch_index/batch_total, followed by TTS synthesis.
+
+    Sends per line: status(thinking) → [all lines buffered] → script_line →
+    status(synthesizing) → tts_ready
     Final: status(paused)
     On error: pops generated lines, sends error message, returns 0.
     """
     session = ai_service.a2d_session
-    generated = 0
-    batch_total = session.batch_size
+    results: list[dict] = []  # buffer results to compute actual batch_total
 
     try:
-        for i in range(batch_total):
+        for i in range(session.batch_size):
             if session.stopped:
                 break
 
@@ -135,10 +139,13 @@ async def _generate_and_synthesize(ai_service, send: SendFn) -> int:
             raw_preview = session.last_raw_llm_response[:2000]
             logger.info(f"A2D LLM raw response ({len(session.last_raw_llm_response)} chars):\n{raw_preview}")
 
-            # Inject batch progress
-            generated += 1
-            result["payload"]["batch_index"] = generated
-            result["payload"]["batch_total"] = batch_total
+            results.append(result)
+
+        # Now we know the actual script_line count — batch_total = len(results)
+        actual_total = len(results)
+        for i, result in enumerate(results, 1):
+            result["payload"]["batch_index"] = i
+            result["payload"]["batch_total"] = actual_total
             await send(result)
 
             pl = result.get("payload")
@@ -176,13 +183,13 @@ async def _generate_and_synthesize(ai_service, send: SendFn) -> int:
                 logger.warning(f"A2D TTS failed (non-fatal): {tts_e}")
 
         await send({"type": "status", "payload": {"phase": "paused"}})
-        session.last_batch_count = generated
-        return generated
+        session.last_batch_count = actual_total
+        return actual_total
 
     except Exception as e:
         logger.error(f"A2D generate+synthesize failed: {e}")
         # Pop generated lines from session
-        for _ in range(generated):
+        for _ in range(len(results)):
             if session.script_lines:
                 session.script_lines.pop()
         session.last_batch_count = 0
