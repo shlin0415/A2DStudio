@@ -126,7 +126,10 @@ async def _generate_and_synthesize(ai_service, send: SendFn) -> int:
             )
 
             if not result:
-                break  # LLM ended conversation or returned nothing
+                # None can mean: (a) LLM returned nothing, or (b) action line was
+                # merged into previous line (AC-1). In either case, continue to
+                # next iteration — don't halt the batch.
+                continue
 
             # Log raw LLM response for monitor extraction
             raw_preview = session.last_raw_llm_response[:2000]

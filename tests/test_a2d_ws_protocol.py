@@ -63,6 +63,16 @@ class TestWSProtocol:
         chars = char_msgs[0].get("payload", {}).get("characters", [])
         assert len(chars) >= 1, "Expected at least 1 character"
 
+        # AC-5: each character must have required fields (backend field names)
+        for c in chars:
+            assert isinstance(c.get("roleId"), int), f"roleId missing or not int: {c}"
+            assert isinstance(c.get("roleName"), str) and len(c["roleName"]) > 0, \
+                f"roleName missing or empty: {c}"
+            assert isinstance(c.get("character_folder"), str) and len(c["character_folder"]) > 0, \
+                f"character_folder missing or empty: {c}"
+            assert isinstance(c.get("script_role_key"), str), \
+                f"script_role_key missing: {c}"
+
         # 2. At least one script_line
         script_lines = [m for m in messages if m.get("type") == "script_line"]
         assert len(script_lines) >= 1, "Expected at least 1 script_line"
