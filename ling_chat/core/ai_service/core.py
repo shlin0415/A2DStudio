@@ -616,11 +616,13 @@ class AIService:
 {系统提醒: 时间信息}
 这些是上下文提示，你需要根据它们自然对话，无需逐条回应。
 
-## 发言格式
-你对每句话的回应要符合格式：【情绪】显示文本<TTS朗读文本>（动作描述）
+## 单人标准发言格式
+你对每句话的回应要符合格式：【情绪】显示文本<TTS朗读文本>
 - 【情绪】内为情绪标签，从以下选择：高兴、兴奋、生气、厌恶、无语、疑惑、慌张、担心、紧张、害怕、害羞、认真、调皮、尴尬、难为情、惊讶、心动、哭泣、自信、无奈
-- <TTS朗读文本> 尖括号内为语音合成朗读文本，可省略
-- （动作描述）放在对话末尾，同一行内。TTS朗读文本中绝对不要包含动作描述
+- <TTS朗读文本> 尖括号内为语音合成朗读文本
+- 只会在必要的时候用括号（）来描述动作，不需要每一段回应都带有动作，（动作）放在对话末尾，同一行内。TTS朗读文本中不要包含动作。
+- 示例1：【羞耻】呀……！？<きゃんっ……！？>（稍稍后退）
+- 示例2：【羞耻】艾玛，你这个小笨狗。<エマ、このバカ犬。>
 - 不使用颜文字，每句话保持完整断句""")
 
         # ── A2D dual-character rules ───────────────────────
@@ -641,30 +643,34 @@ class AIService:
             dual_names = [chars[k].character_folder for k in dual_lang_chars]
             tts_instruction = (
                 f"注意：{', '.join(dual_names)} 的显示语言与TTS语音语言不同，"
-                "这些角色必须提供<TTS朗读文本>，不可省略。"
-                "TTS文本必须是对应语音语言的翻译，不能是显示语言的原文。"
+                "这些角色需要提供<TTS朗读文本>。"
+                "TTS文本是对应语音语言的翻译。"
             )
         else:
-            tts_instruction = "可省略<TTS文本>（显示语言与TTS语言相同）。"
+            # tts_instruction = "可省略<TTS文本>（显示语言与TTS语言相同）。"
+            tts_instruction = ""
 
         prompt_lines = []
-        prompt_lines.append("## 发言输出格式")
+        prompt_lines.append("## 多人整体输出格式，承接单人标准发言格式")
         prompt_lines.append("每次生成一句对话。根据对话上下文，选择一个合适的角色发言。")
-        prompt_lines.append("先标注说话者，然后使用标准格式：")
-        prompt_lines.append("")
+        prompt_lines.append("先标注说话者，然后使用标准发言格式。")
+        prompt_lines.append("示例1：")
         prompt_lines.append('{"speaker":"ema"}')
-        prompt_lines.append("【情绪】显示文本<TTS朗读文本>（动作描述）")
+        prompt_lines.append("【害羞】唔，又被希罗酱说小笨狗了。<うん、またヒロちゃんにバカ犬って言われちゃった。>")
+        prompt_lines.append("示例2：")
+        prompt_lines.append('{"speaker":"hiro"}')
+        prompt_lines.append("【害羞】艾玛，这是，不正确的。<エマ、それは、正しくない。>（脸红着别开视线）")
         prompt_lines.append("")
         prompt_lines.append("规则：")
         prompt_lines.append("- speaker 使用上面定义的 speaker_id")
-        prompt_lines.append("- 【情绪】方括号内为情绪标签，从给定列表中选择")
-        prompt_lines.append(f"- <TTS朗读文本> 尖括号内为TTS语音合成文本，{tts_instruction}")
-        prompt_lines.append("- （动作描述）放在对话末尾，同一行内。TTS朗读文本中绝对不要包含动作描述")
-        prompt_lines.append("- 根据对话流向选择最合适的发言者，用自然的对话节奏")
+        # prompt_lines.append("- 【情绪】方括号内为情绪标签，从给定列表中选择")
+        # prompt_lines.append(f"- <TTS朗读文本> 尖括号内为TTS语音合成文本，{tts_instruction}")
+        # prompt_lines.append("- （动作描述）放在对话末尾，同一行内。TTS朗读文本中绝对不要包含动作描述")
+        prompt_lines.append("- 可以根据对话历史和流向选择合适的发言者，用自然的对话节奏")
         char_names = [cfg.character_folder for cfg in chars.values()]
-        if len(char_names) > 1:
-            prompt_lines.append("- 交替让角色发言，不要连续让同一个角色说话")
-        prompt_lines.append("- 如果对话应该继续，选择下一个角色；如果自然结束，可以给出简短的结束语")
+        # if len(char_names) > 1:
+        #     prompt_lines.append("- 交替让角色发言，不要连续让同一个角色说话")
+        # prompt_lines.append("- 如果对话应该继续，选择下一个角色；如果自然结束，可以给出简短的结束语")
         prompt_lines.append("")
         prompt_lines.append("## 角色语言设定")
         prompt_lines.append(lang_info)
@@ -739,7 +745,8 @@ class AIService:
         if len(session.script_lines) == 0:
             messages.append({
                 "role": "user",
-                "content": "{旁白：开场}\n剧本家希望两个角色开始对话。",
+                "content": "{旁白：开场}\n可以开始对话啦。",
+                # "content": "{旁白：开场}\n剧本家希望两个角色开始对话。",
             })
 
         logger.debug(
@@ -796,7 +803,7 @@ class AIService:
     ) -> "ScriptLine | None":
         """Parse one line of LLM output into a ScriptLine.
 
-        Expected format: 【emotion】display_text<TTS_text>（action）
+        Expected format: 【emotion】display_text<TTS_text>（action） or 【emotion】display_text<TTS_text>
         Language-agnostic — no assumptions about ja/zh/en.
         """
         import re
