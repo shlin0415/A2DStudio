@@ -6,7 +6,7 @@ import { emitTrace } from '@/utils/a2d-trace'
 
 export interface ScriptLine {
   id: string
-  speaker: 'ema' | 'hiro'
+  speaker: 'ema' | 'hiro' | 'narrator'
   emotion?: string
   display_text: string
   tts_text: string
@@ -34,7 +34,6 @@ export const useScriptStore = defineStore('script', () => {
   const phase = ref<Phase>('idle')
   const error = ref<ErrorInfo | null>(null)
   const generationId = ref<string | null>(null)
-  const consecutiveErrors = ref(0)
 
   // Cross-tab editor state
   const selectedLineId = ref<string | null>(null)
@@ -61,7 +60,10 @@ export const useScriptStore = defineStore('script', () => {
   function addLine(line: ScriptLine) {
     lines.value.push(line)
     currentLine.value = line
-    emitTrace('script_line', { lineId: line.id, speaker: line.speaker, index: line.index })
+    emitTrace('script_line', {
+      lineId: line.id, speaker: line.speaker, index: line.index,
+      batch_index: line.batch_index, batch_total: line.batch_total,
+    })
     emitTrace('currentLine', { lineId: line.id, index: line.index })
     // Track batch progress (undefined = single-line or legacy)
     if (line.batch_index != null) batchIndex.value = line.batch_index
@@ -83,13 +85,11 @@ export const useScriptStore = defineStore('script', () => {
 
   function setError(err: ErrorInfo) {
     error.value = err
-    phase.value = 'error'
-    consecutiveErrors.value++
+    setPhase('error')  // emits phase_change trace (was: phase.value = 'error')
   }
 
   function clearError() {
     error.value = null
-    consecutiveErrors.value = 0
   }
 
   function reset() {
@@ -98,7 +98,6 @@ export const useScriptStore = defineStore('script', () => {
     phase.value = 'idle'
     error.value = null
     generationId.value = null
-    consecutiveErrors.value = 0
     selectedLineId.value = null
     editedText.value = {}
     activeTab.value = 'review'
@@ -140,7 +139,7 @@ export const useScriptStore = defineStore('script', () => {
   })
 
   return {
-    lines, currentLine, phase, error, generationId, consecutiveErrors,
+    lines, currentLine, phase, error, generationId,
     selectedLineId, editedText, activeTab, selectedLine,
     batchIndex, batchTotal, playingLineId, isAudioPlaying, playingLine,
     isThinking, isTranslating, isSynthesizing, isPaused, hasError, isIdle, isBusy,

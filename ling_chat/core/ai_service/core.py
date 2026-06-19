@@ -517,6 +517,9 @@ class AIService:
         messages = self._a2d_build_messages(system_prompt)
         full_text = await self._a2d_call_llm_with_retry(messages)
 
+        # Store verbatim LLM response for monitor/debugging
+        session.last_raw_llm_response = full_text
+
         # Parse LLM response — LLM decides speaker via JSON markers
         first_key = list(session.characters.keys())[0]
         current_speaker = first_key
@@ -541,8 +544,25 @@ class AIService:
             # Parse: 【emotion】content<TTS>（action）
             line = self._a2d_parse_script_line(raw_line, current_speaker)
             if line:
-                session.add_line(line)
-                lines.append(line)
+                if line.speaker == "narrator":
+                    # Pure action line — merge into previous line's raw_text
+                    # to preserve KV-cache-friendly verbatim LLM output format
+                    if lines:
+                        prev = lines[-1]
+                        prev.raw_text = (prev.raw_text or "") + "\n" + raw_line
+                        # Sync session copy too
+                        sid = prev.id  # ScriptLine id (UUID string)
+                        for sl in session.lines:
+                            if sl.id == sid:
+                                sl.raw_text = prev.raw_text
+                                break
+                    else:
+                        # First line in batch is action — keep as narrator (fallback)
+                        session.add_line(line)
+                        lines.append(line)
+                else:
+                    session.add_line(line)
+                    lines.append(line)
 
         if not lines:
             raise RuntimeError(
@@ -619,7 +639,7 @@ class AIService:
 你对每句话的回应要符合格式：【情绪】显示文本<TTS朗读文本>（动作描述）
 - 【情绪】内为情绪标签，从以下选择：高兴、兴奋、生气、厌恶、无语、疑惑、慌张、担心、紧张、害怕、害羞、认真、调皮、尴尬、难为情、惊讶、心动、哭泣、自信、无奈
 - <TTS朗读文本> 尖括号内为语音合成朗读文本，可省略
-- （动作描述）必须放在句末，不要插在句子中间打断文本
+- （动作描述）单独占一行，放在对应的对话之后，纯动作行以（开头以）结尾，不包含任何对话内容
 - TTS朗读文本中不要包含动作描述
 - 不使用颜文字，每句话保持完整断句""")
 
@@ -667,7 +687,7 @@ class AIService:
         prompt_lines.append("- speaker 使用上面定义的 speaker_id")
         prompt_lines.append("- 【情绪】方括号内为情绪标签")
         prompt_lines.append(f"- <TTS朗读文本> 尖括号内为TTS朗读文本，{tts_instruction}")
-        prompt_lines.append("- （动作描述）必须放在句末，不要插在句子中间，严禁单独成行输出")
+        prompt_lines.append("- （动作描述）单独占一行，放在对应的对话之后，纯动作描述行以（开头以）结尾，不包含任何对话内容")
         prompt_lines.append("- 根据对话流向选择最合适的发言者，用自然的对话节奏，不需要严格交替")
         char_names = [cfg.character_folder for cfg in chars.values()]
         if len(char_names) > 1:

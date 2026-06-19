@@ -47,6 +47,7 @@ class SessionRuntime:
         self.stopped: bool = False
         self.batch_size: int = 1
         self.last_batch_count: int = 0  # lines generated in last _generate_and_synthesize call
+        self.last_raw_llm_response: str = ""  # verbatim LLM output from most recent a2d_generate_next
 
         # Script data
         self.script_lines: list[ScriptLine] = []

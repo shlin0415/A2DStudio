@@ -169,6 +169,26 @@ def main():
         for c in a2d_console:
             f.write(f"- [{c['t']}] **{c['type']}** {c['text']}\n")
 
+        # ── LLM raw response (extracted from backend log) ──
+        f.write(f"\n## LLM Raw Response\n\n")
+        backend_log = Path(__file__).resolve().parent.parent / "tmp" / "backend-monitor.log"
+        try:
+            if backend_log.exists():
+                raw_entries = []
+                with open(backend_log, "r", encoding="utf-8", errors="replace") as bl:
+                    for line in bl:
+                        if "A2D LLM raw response" in line:
+                            raw_entries.append(line.strip())
+                if raw_entries:
+                    for entry in raw_entries[-5:]:  # Last 5 responses
+                        f.write(f"```\n{entry[-2000:]}\n```\n\n")
+                else:
+                    f.write("(No LLM raw responses found in backend log)\n")
+            else:
+                f.write(f"(Backend log not found: {backend_log})\n")
+        except Exception as e:
+            f.write(f"(Error reading backend log: {e})\n")
+
         f.write(f"\n## Full Console ({len(console_log)} entries)\n\n")
         for c in console_log:
             f.write(f"- [{c['t']}] [{c['type']}] {c['text']}\n")

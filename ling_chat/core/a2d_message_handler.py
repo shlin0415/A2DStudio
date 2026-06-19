@@ -122,6 +122,10 @@ async def _generate_and_synthesize(ai_service, send: SendFn) -> int:
         if not results:
             raise RuntimeError("LLM returned empty result")
 
+        # Log raw LLM response for monitor extraction (truncated to 2000 chars)
+        raw_preview = session.last_raw_llm_response[:2000]
+        logger.info(f"A2D LLM raw response ({len(session.last_raw_llm_response)} chars):\n{raw_preview}")
+
         # Step 2: Send each line + synthesize TTS (TTS failure is non-fatal per line)
         batch_total = len(results)
         for i, result in enumerate(results):
