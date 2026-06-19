@@ -140,14 +140,16 @@ def assert_audio_sync(events: list[dict]) -> list[str]:
                     f"Round {r}: playingLine repeated lineId {seen_ids[i]} (non-progressing)"
                 )
 
-        # Check every audio_end has a corresponding audio_start before it
+        # Check every audio_end has a corresponding audio_start before it.
+        # Search globally across all rounds (not just current round) because
+        # drain_trace between rounds can split audio_start and audio_end.
+        global_audio = [e for e in events if e.get("event", "").startswith("audio_")]
         for e in audio_events:
             if e.get("event") == "audio_end":
                 lid = e.get("data", {}).get("lineId")
-                # Find matching audio_start for this lineId
                 has_start = any(
                     a.get("event") == "audio_start" and a.get("data", {}).get("lineId") == lid
-                    for a in audio_events
+                    for a in global_audio
                 )
                 if not has_start:
                     errors.append(

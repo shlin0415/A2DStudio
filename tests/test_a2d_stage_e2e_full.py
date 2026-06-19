@@ -116,21 +116,21 @@ class TestFullDialogueFlow:
                 btn.wait_for(state="visible", timeout=5000)
                 btn.click()
             except Exception:
-                pytest.skip(f"Button '{btn_text}' not available (env fault)")
+                store_snap = extract_store(page)
+                pytest.skip(f"Button '{btn_text}' not available (env fault). Store: {store_snap}")
 
-            # Wait for round completion
-            try:
-                page.wait_for_function(
-                    """() => {
-                        const store = document.querySelector('#app').__vue_app__
-                            .config.globalProperties.$pinia._s.get('script');
-                        return store && (store.phase === 'paused' || store.phase === 'error');
-                    }""",
-                    timeout=ROUND_TIMEOUT * 1000,
-                )
-            except Exception:
+            # Wait for round completion — poll via page.evaluate to avoid
+            # potential CDP interference with WebSocket from wait_for_function
+            deadline = time.time() + ROUND_TIMEOUT
+            phase = "?"
+            while time.time() < deadline:
+                page.wait_for_timeout(1000)
                 store = extract_store(page)
                 phase = store.get("scriptPhase", "?")
+                if phase in ("paused", "error"):
+                    break
+
+            if phase not in ("paused", "error"):
                 if phase == "error":
                     error_info = store.get("error", {})
                     msg = error_info.get("message", "") if error_info else ""
@@ -141,17 +141,29 @@ class TestFullDialogueFlow:
                 else:
                     pytest.skip(f"Round {r+1} timeout at phase {phase} (env fault)")
 
-            # Per-round trace: drain (reset per round) then extract (non-draining)
+            # Per-round trace: small delay then drain
+            page.wait_for_timeout(1000)
             round_trace = drain_trace(page)
             all_traces.extend(round_trace)
 
+            # ── Detailed diagnostics on assertion failure ──
             errors = []
             errors += assert_phase_sequence(round_trace)
             errors += assert_has_script_lines(round_trace)
 
             result = classify_test_result(errors)
             if result == "FAIL":
-                pytest.fail(f"Round {r+1} assertions failed:\n" + "\n".join(errors))
+                # Dump full trace + console + store for diagnosis
+                store_state = extract_store(page)
+                console_tail = page._console_msgs[-20:] if hasattr(page, '_console_msgs') else []
+                trace_summary = f"  events: {len(round_trace)}, types: {[e.get('event') for e in round_trace]}"
+                pytest.fail(
+                    f"Round {r+1} assertions failed:\n" + "\n".join(errors) +
+                    f"\n\n── Diagnostics for Round {r+1} ──" +
+                    f"\nTrace {trace_summary}" +
+                    f"\nStore phase={store_state.get('scriptPhase','?')} lines={len(store_state.get('scriptLines',[]))}" +
+                    f"\nConsole (last 10): {console_tail[-10:]}"
+                )
             elif result == "SKIP":
                 pytest.skip(f"Round {r+1} environment fault")
 
