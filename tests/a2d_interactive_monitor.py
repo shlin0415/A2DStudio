@@ -176,12 +176,27 @@ def main():
             if backend_log.exists():
                 raw_entries = []
                 with open(backend_log, "r", encoding="utf-8", errors="replace") as bl:
-                    for line in bl:
-                        if "A2D LLM raw response" in line:
-                            raw_entries.append(line.strip())
+                    lines = bl.readlines()
+                i = 0
+                while i < len(lines):
+                    if "A2D LLM raw response" in lines[i]:
+                        header = lines[i].strip()
+                        # Collect next line(s) — stop at next log timestamp or next LLM header
+                        body_lines = []
+                        j = i + 1
+                        while j < len(lines) and "A2D LLM raw response" not in lines[j]:
+                            stripped = lines[j].strip()
+                            if stripped and not stripped.startswith("[DEBUG]"):
+                                body_lines.append(stripped)
+                            j += 1
+                        body = "\n".join(body_lines)
+                        raw_entries.append((header, body))
+                        i = j
+                    else:
+                        i += 1
                 if raw_entries:
-                    for entry in raw_entries[-5:]:  # Last 5 responses
-                        f.write(f"```\n{entry[-2000:]}\n```\n\n")
+                    for header, body in raw_entries[-3:]:  # Last 3 responses
+                        f.write(f"**{header}**\n```\n{body[:2000]}\n```\n\n")
                 else:
                     f.write("(No LLM raw responses found in backend log)\n")
             else:
