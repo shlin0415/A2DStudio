@@ -1,16 +1,18 @@
-"""Pipeline latency profiler — Playwright-based, batch_size=5, measures per-stage timing.
+"""Pipeline latency profiler — batch_size=5, Gantt timeline with correct metrics.
 
 Usage:
   PYTHONUTF8=1 uv run python tests/a2d_perf_latency.py
-  PYTHONUTF8=1 uv run python tests/a2d_perf_latency.py --batch-size 3 --headed
+  PYTHONUTF8=1 uv run python tests/a2d_perf_latency.py --batch-size 3
 
-Requires: full stack running (backend + frontend + GSV), Playwright installed.
+Default: headed browser. Use --headless for headless mode.
+Requires: full stack running, Playwright installed.
 """
 
 import argparse
+import json
 import os
-import time
 import sys
+import time
 from pathlib import Path
 
 PROJECT_ROOT = Path(__file__).resolve().parent.parent
@@ -22,153 +24,240 @@ BATCH_SIZE = int(os.environ.get("A2D_PERF_BATCH_SIZE", "5"))
 ROUND_TIMEOUT = int(os.environ.get("A2D_PERF_ROUND_TIMEOUT", "300"))
 
 
-# ── Trace parsing ─────────────────────────────────────────────────
+# ═══════════════════════════════════════════════════════════════
+# Timeline extraction
+# ═══════════════════════════════════════════════════════════════
 
+def build_timeline(traces: list[dict]) -> list[dict]:
+    """Extract a flat ordered timeline of key events with wall-clock ms.
 
-def parse_traces(traces: list[dict]) -> list[dict]:
-    """Group trace events into per-line segments for timing analysis.
-
-    Returns list of dicts:
-      {line_id, line_idx, t_ws_script_line, t_ws_tts_ready, t_audio_queued,
-       t_preroll_start, t_preroll_end, t_audio_start, t_audio_end,
-       llm_ms, tts_ms, queue_ms, preroll_ms, audio_ms}
+    Each item: {wall_s, event, line_id, speaker, detail}
     """
-    segments: dict[str, dict] = {}  # lineId -> partial segment
-
-    def get_seg(lid: str) -> dict:
-        if lid not in segments:
-            segments[lid] = {"line_id": lid}
-        return segments[lid]
-
-    for i, e in enumerate(traces):
-        evt = e.get("event", "")
-        ts = e.get("ts", 0)
-        data = e.get("data") or {}
+    items = []
+    for t in traces:
+        evt = t.get("event", "")
+        data = t.get("data") or {}
+        wall = (t.get("wall") or 0) / 1000
         lid = data.get("lineId") or data.get("id") or ""
-
-        if evt == "ws_script_line":
-            seg = get_seg(lid)
-            seg["t_ws_script_line"] = ts
-        elif evt == "script_line":
-            lid2 = data.get("lineId", "")
-            seg = get_seg(lid2)
-            seg["t_script_line"] = ts
-            seg["speaker"] = data.get("speaker", "?")
-        elif evt == "ws_tts_ready":
-            seg = get_seg(lid)
-            seg["t_ws_tts_ready"] = ts
-        elif evt == "audio_queued":
-            seg = get_seg(lid)
-            seg["t_audio_queued"] = ts
-        elif evt == "preroll_start":
-            seg = get_seg(lid)
-            seg["t_preroll_start"] = ts
-            seg["first_play"] = data.get("firstPlay", False)
-        elif evt == "preroll_end":
-            seg = get_seg(lid)
-            seg["t_preroll_end"] = ts
-        elif evt == "audio_start":
-            seg = get_seg(lid)
-            seg["t_audio_start"] = ts
-        elif evt == "audio_end":
-            seg = get_seg(lid)
-            seg["t_audio_end"] = ts
-
-    # Compute durations, filter incomplete segments
-    result = []
-    for lid, seg in segments.items():
-        if seg.get("t_ws_script_line") is None or seg.get("t_audio_end") is None:
-            continue  # incomplete
-
-        t_ws_sl = seg["t_ws_script_line"]
-        t_ws_tts = seg.get("t_ws_tts_ready")
-        t_q = seg.get("t_audio_queued", t_ws_tts)
-        t_ps = seg.get("t_preroll_start")
-        t_pe = seg.get("t_preroll_end")
-        t_as = seg.get("t_audio_start", t_pe)
-        t_ae = seg["t_audio_end"]
-
-        # LLM+TTS: from script_line WS receipt to tts_ready WS receipt (backend combined)
-        llm_ms = (t_ws_tts - t_ws_sl) if t_ws_tts else 0
-
-        # Queue wait: from audio_queued to preroll_start
-        queue_ms = (t_ps - t_q) if t_ps else 0
-
-        # Pre-Roll: preroll_start to preroll_end
-        preroll_ms = (t_pe - t_ps) if t_ps and t_pe else 0
-
-        # Audio playback: audio_start to audio_end
-        audio_ms = t_ae - t_as if t_as else 0
-
-        # Total: ws_script_line to audio_end
-        total_ms = t_ae - t_ws_sl
-
-        seg["llm_ms"] = llm_ms
-        seg["queue_ms"] = queue_ms
-        seg["preroll_ms"] = preroll_ms
-        seg["audio_ms"] = audio_ms
-        seg["total_ms"] = total_ms
-
-        result.append(seg)
-
-    result.sort(key=lambda s: s.get("t_ws_script_line", 0))
-    return result
+        spk = data.get("speaker") or ""
+        to_phase = data.get("to") or ""
+        items.append({
+            "wall_s": wall,
+            "event": evt,
+            "line_id": lid[:8] if lid else "",
+            "speaker": spk,
+            "detail": to_phase,
+        })
+    items.sort(key=lambda x: x["wall_s"])
+    return items
 
 
-def print_report(segments: list[dict], wall_sec: float) -> None:
-    """Print latency breakdown table."""
+# ═══════════════════════════════════════════════════════════════
+# Metrics
+# ═══════════════════════════════════════════════════════════════
+
+def compute_metrics(traces: list[dict]) -> dict:
+    """Compute human-meaningful latency metrics from raw traces."""
+    first_audio_start = None
+    last_audio_end = None
+    audio_ends: list[float] = []      # wall_s of each audio_end
+    audio_starts: list[float] = []    # wall_s of each audio_start
+    first_think = None                # first phase_change → thinking
+    backend_done = None               # last ws_tts_ready (all TTS done)
+    preroll_starts: list[float] = []
+    preroll_ends: list[float] = []
+
+    for t in traces:
+        evt = t.get("event", "")
+        data = t.get("data") or {}
+        wall = (t.get("wall") or 0) / 1000
+
+        if evt == "phase_change" and data.get("to") == "thinking" and first_think is None:
+            first_think = wall
+        if evt == "audio_start":
+            if first_audio_start is None:
+                first_audio_start = wall
+            audio_starts.append(wall)
+        if evt == "audio_end":
+            audio_ends.append(wall)
+            last_audio_end = wall
+        if evt == "ws_tts_ready":
+            backend_done = wall  # last one wins
+        if evt == "preroll_start":
+            preroll_starts.append(wall)
+        if evt == "preroll_end":
+            preroll_ends.append(wall)
+
+    if first_think is None or first_audio_start is None:
+        return {}
+
+    cold_start_s = first_audio_start - first_think
+    continuous_playback_s = (last_audio_end - first_audio_start) if last_audio_end else 0
+
+    # Idle gaps: silence > 100ms between audio_end[N] and audio_start[N+1]
+    idle_gaps = []
+    for i in range(len(audio_ends)):
+        if i + 1 < len(audio_starts):
+            gap = audio_starts[i + 1] - audio_ends[i]
+            if gap > 0.1:
+                idle_gaps.append((i + 1, i + 2, gap))
+
+    total_idle_s = sum(g[2] for g in idle_gaps)
+
+    # Pipeline lead: last backend completion vs last audio_end
+    pipeline_lead_s = (last_audio_end - backend_done) if (backend_done and last_audio_end) else 0
+
+    return {
+        "cold_start_s": cold_start_s,
+        "continuous_playback_s": continuous_playback_s,
+        "idle_gaps": idle_gaps,
+        "total_idle_s": total_idle_s,
+        "pipeline_lead_s": pipeline_lead_s,
+        "first_audio_start": first_audio_start,
+        "last_audio_end": last_audio_end,
+        "backend_done": backend_done,
+        "audio_count": len(audio_starts),
+    }
+
+
+# ═══════════════════════════════════════════════════════════════
+# Gantt chart
+# ═══════════════════════════════════════════════════════════════
+
+def print_gantt(timeline: list[dict]) -> None:
+    """Print ASCII Gantt chart of pipeline events."""
+    if not timeline:
+        return
+    t0 = timeline[0]["wall_s"]
+    total = timeline[-1]["wall_s"] - t0
+    width = 90
+
     print()
-    print("=" * 95)
-    print("  A2D Pipeline Latency Report  (batch_size=5)")
-    print(f"  Total wall time: {wall_sec:.1f}s")
-    print("=" * 95)
-    print(f"  {'#':>2} {'Spk':>4}  {'LLM+TTS':>8}  {'WaitNext':>9}  {'PreRoll':>8}  {'Audio':>6}  {'Total':>7}  {'Overlap':>8}")
-    print(f"  {'':->2} {'':->4}  {'':->8}  {'':->9}  {'':->8}  {'':->6}  {'':->7}  {'':->8}")
-
-    prev_ae = 0
-    for i, seg in enumerate(segments):
-        t_ws_sl = seg.get("t_ws_script_line", 0)
-        overlap_ms = max(0, prev_ae - t_ws_sl) if prev_ae > 0 else 0
-        overlap_s = f"{overlap_ms:.0f}ms" if overlap_ms < 1000 else f"{overlap_ms/1000:.1f}s"
-
-        print(
-            f"  {i+1:>2} {seg.get('speaker', '?'):>4}  "
-            f"{seg['llm_ms']:>7.0f}ms  {seg['queue_ms']:>8.0f}ms  "
-            f"{seg['preroll_ms']:>7.0f}ms  "
-            f"{seg['audio_ms']:>5.0f}ms  {seg['total_ms']:>6.0f}ms  {overlap_s:>8}"
-        )
-        prev_ae = seg.get("t_audio_end", 0)
-
-    if segments:
-        avg_llm = sum(s["llm_ms"] for s in segments) / len(segments)
-        avg_queue = sum(s["queue_ms"] for s in segments) / len(segments)
-        avg_preroll = sum(s["preroll_ms"] for s in segments) / len(segments)
-        avg_audio = sum(s["audio_ms"] for s in segments) / len(segments)
-        hidden = sum(max(0, segments[i-1].get("t_audio_end", 0) - s.get("t_ws_script_line", 0))
-                     for i, s in enumerate(segments) if i > 0)
-        print(f"  {'':->2} {'':->4}  {'':->8}  {'':->9}  {'':->8}  {'':->6}  {'':->7}  {'':->8}")
-        print(
-            f"  {'AVG':>2} {'':>4}  "
-            f"{avg_llm:>7.0f}ms  {avg_queue:>8.0f}ms  "
-            f"{avg_preroll:>7.0f}ms  "
-            f"{avg_audio:>5.0f}ms  "
-        )
-        print()
-        print(f"  Pipeline efficiency: {hidden/1000:.1f}s hidden by audio overlap "
-              f"({hidden/(wall_sec*1000)*100:.0f}% of {wall_sec:.1f}s wall time)")
-
-    print("=" * 95)
+    print("  ═══ Pipeline Gantt Chart ═══")
+    print(f"  time origin = {t0:.1f}s  |  total span = {total:.0f}s")
     print()
 
+    # Group by line_id for per-line bars
+    lines: dict[str, dict[str, float]] = {}
+    phases: list[tuple[float, float, str]] = []  # (start, end, label)
 
-# ── Main ──────────────────────────────────────────────────────
+    current_phase = None
+    phase_start = 0.0
+    for item in timeline:
+        evt = item["event"]
+        lid = item["line_id"]
+        ws = item["wall_s"]
 
+        if evt == "phase_change":
+            to_p = item["detail"]
+            if current_phase:
+                phases.append((phase_start, ws, current_phase))
+            current_phase = to_p if to_p else current_phase
+            phase_start = ws
+
+        if evt == "audio_start" and lid:
+            lines.setdefault(lid, {})["play_start"] = ws
+        if evt == "audio_end" and lid:
+            lines.setdefault(lid, {})["play_end"] = ws
+        if evt == "ws_script_line" and lid:
+            lines.setdefault(lid, {})["llm_end"] = ws
+
+    if current_phase:
+        phases.append((phase_start, timeline[-1]["wall_s"], current_phase))
+
+    # Phase bar
+    def bar(start_s: float, end_s: float, label: str, width: int = width) -> str:
+        offset = int((start_s - t0) / total * width)
+        length = max(1, int((end_s - start_s) / total * width))
+        return " " * offset + "█" * length + f"  {label}"
+
+    # Print phase timeline
+    print("  ── Phase ──")
+    phase_colors = {"thinking": "░", "synthesizing": "▓", "paused": "▒"}
+    for ps, pe, ph in phases:
+        offset = int((ps - t0) / total * width)
+        length = max(1, int((pe - ps) / total * width))
+        ch = phase_colors.get(ph, " ")
+        dur = pe - ps
+        bar_str = " " * offset + ch * length
+        pct = int(offset + length * 0.5)
+        print(f"  {bar_str} {ph} ({dur:.1f}s)")
+
+    # Print per-line audio bars
+    line_order = sorted(lines.keys(), key=lambda l: lines[l].get("play_start", 9999))
+    print()
+    print("  ── Audio playback (per line) ──")
+    for i, lid in enumerate(line_order):
+        ln = lines[lid]
+        ps = ln.get("play_start", 0)
+        pe = ln.get("play_end", 0)
+        offset = int((ps - t0) / total * width)
+        length = max(1, int((pe - ps) / total * width))
+        bar_str = " " * offset + "━" * length
+        print(f"  {bar_str} line#{i+1} ({pe-ps:.1f}s)")
+
+    # Time ruler
+    print()
+    ruler = "  "
+    for i in range(0, int(total) + 1, 10):
+        pos = int(i / total * width)
+        ruler = ruler[:pos] + "|" + ruler[pos+1:]
+    print(ruler)
+    tick_labels = "  "
+    for i in range(0, int(total) + 1, 10):
+        pos = int(i / total * width)
+        label = f"{i}s"
+        tick_labels = tick_labels[:pos] + label + tick_labels[pos+len(label):]
+    print(tick_labels)
+    print()
+
+
+# ═══════════════════════════════════════════════════════════════
+# Report
+# ═══════════════════════════════════════════════════════════════
+
+def print_report(metrics: dict) -> None:
+    print()
+    print("=" * 70)
+    print("  A2D Pipeline Performance Report")
+    print("=" * 70)
+    cs = metrics["cold_start_s"]
+    cp = metrics["continuous_playback_s"]
+    ti = metrics["total_idle_s"]
+    pl = metrics["pipeline_lead_s"]
+    n = metrics["audio_count"]
+
+    print(f"  Audio lines:            {n}")
+    print(f"  ─────────────────────────────────────────")
+    print(f"  Cold start wait:        {cs:>6.1f}s   (click → first sound)")
+    print(f"  Continuous playback:    {cp:>6.1f}s   (first → last audio_end)")
+    print(f"  ─   idle gaps within:   {ti:>6.1f}s   (silence > 100ms)")
+    print(f"  Pipeline lead:          {pl:>6.1f}s   (backend done ahead of last audio)")
+    print(f"  ─────────────────────────────────────────")
+    print(f"  Total wall time:        {cs+cp:>6.1f}s   (cold start + playback)")
+    print()
+
+    gaps = metrics["idle_gaps"]
+    if gaps:
+        print(f"  ⚠ Idle gaps (silence between lines):")
+        for a, b, gap in gaps:
+            print(f"    line#{a} → line#{b}: {gap:.2f}s gap")
+    else:
+        print(f"  ✓ No idle gaps — seamless audio transitions")
+
+    print("=" * 70)
+    print()
+
+
+# ═══════════════════════════════════════════════════════════════
+# Main
+# ═══════════════════════════════════════════════════════════════
 
 def main():
     parser = argparse.ArgumentParser(description="A2D Pipeline Latency Profiler")
-    parser.add_argument("--batch-size", type=int, default=BATCH_SIZE, help="Batch size (default: 5)")
-    parser.add_argument("--headed", action="store_true", help="Show browser window")
-    parser.add_argument("--round-timeout", type=int, default=ROUND_TIMEOUT, help="Round timeout in seconds")
+    parser.add_argument("--batch-size", type=int, default=BATCH_SIZE)
+    parser.add_argument("--headless", action="store_true", help="Run headless (default: headed)")
+    parser.add_argument("--round-timeout", type=int, default=ROUND_TIMEOUT)
     args = parser.parse_args()
 
     try:
@@ -177,41 +266,34 @@ def main():
         print("ERROR: Playwright not installed. Run: uv run playwright install chromium")
         sys.exit(1)
 
-    print(f"Opening {STAGE_URL} ...")
+    print(f"Opening {STAGE_URL} (headed={not args.headless}) ...")
+
     with sync_playwright() as p:
-        browser = p.chromium.launch(headless=not args.headed)
+        browser = p.chromium.launch(headless=args.headless)
         page = browser.new_page(viewport={"width": 1280, "height": 720})
 
-        # Collect all console for debugging
         console_msgs: list[str] = []
         page.on("console", lambda msg: console_msgs.append(msg.text))
 
         page.goto(STAGE_URL)
         page.wait_for_load_state("networkidle")
 
-        # Wait for WS connection
+        # Wait for WS
         try:
-            page.wait_for_function(
-                "() => window.__a2d_ws_connected === true",
-                timeout=15000,
-            )
+            page.wait_for_function("() => window.__a2d_ws_connected === true", timeout=15000)
         except Exception:
-            # Fallback: check console for [A2D] WebSocket connected
-            ws_ok = any("[A2D] WebSocket connected" in m for m in console_msgs)
-            if not ws_ok:
+            if not any("[A2D] WebSocket connected" in m for m in console_msgs):
                 print("ERROR: WebSocket not connected within 15s")
                 browser.close()
                 sys.exit(1)
 
-        print("WebSocket connected ✓")
+        print("WS connected ✓")
 
-        # Set batch_size via the number input
+        # Set batch size
         batch_input = page.locator(".batch-input")
         if batch_input.is_visible(timeout=5000):
             batch_input.fill(str(args.batch_size))
-            print(f"Batch size set to {args.batch_size} ✓")
-        else:
-            print("WARNING: batch input not found, using default")
+            print(f"Batch size = {args.batch_size} ✓")
 
         # Click start
         start_btn = page.locator("button:has-text('开始对话')")
@@ -219,88 +301,77 @@ def main():
             print("ERROR: start button not visible")
             browser.close()
             sys.exit(1)
-        start_btn.click()
-        print("Started dialogue — waiting for all audio to finish...")
 
-        # Wait for paused phase then audio drain
+        t_click = time.time()
+        start_btn.click()
+        print("Started — waiting for completion...")
+
+        # Wait for paused + audio drain
         deadline = time.time() + args.round_timeout
         phase = "?"
         while time.time() < deadline:
             page.wait_for_timeout(1000)
             try:
-                store = page.evaluate("""
-                    () => {
-                        const pinia = document.querySelector('#app').__vue_app__
-                            .config.globalProperties.$pinia;
-                        const s = pinia._s.get('script');
-                        return s ? { phase: s.phase, lines: s.lines?.length || 0 } : null;
-                    }
+                s = page.evaluate("""
+                    () => { const p = document.querySelector('#app').__vue_app__
+                        .config.globalProperties.$pinia._s.get('script');
+                        return p ? { phase: p.phase, lines: p.lines?.length||0 } : null; }
                 """)
-                if store:
-                    phase = store["phase"]
-                    elapsed = int(time.time() - (deadline - args.round_timeout))
-                    print(f"  [{elapsed}s] phase={phase} lines={store['lines']}", end="\r")
+                if s:
+                    phase = s["phase"]
+                    elapsed = int(time.time() - t_click)
+                    print(f"  [{elapsed}s] phase={phase} lines={s['lines']}", end="\r")
                     if phase in ("paused", "error"):
                         break
             except Exception:
                 pass
 
         print()
+        if phase == "error":
+            print("ERROR: backend error — check backend-monitor.log")
+            browser.close()
+            sys.exit(1)
         if phase not in ("paused", "error"):
             print(f"ERROR: timeout at phase={phase}")
             browser.close()
             sys.exit(1)
-        if phase == "error":
-            print("ERROR: backend reported error — check backend log")
-            browser.close()
-            sys.exit(1)
 
-        print("Phase=paused — waiting for audio queue to empty...")
-        # Wait for audio_queue_empty
+        print("Waiting for audio drain...")
         deadline2 = time.time() + 60
         drained = False
         while time.time() < deadline2:
             page.wait_for_timeout(1000)
             try:
-                traces = page.evaluate("() => window.__a2dTrace || []")
-                if any(t.get("event") == "audio_queue_empty" for t in traces):
+                tr = page.evaluate("() => window.__a2dTrace || []")
+                if any(t.get("event") == "audio_queue_empty" for t in tr):
                     drained = True
                     break
             except Exception:
                 pass
         if not drained:
-            print("WARNING: audio_queue_empty not detected within 60s")
-        # Extra grace period
+            print("WARNING: audio_queue_empty not seen in 60s")
         page.wait_for_timeout(3000)
 
-        # Extract all traces
         traces = page.evaluate("() => window.__a2dTrace || []")
-
-        # Find wall start from first phase_change to thinking
-        t0 = next((t.get("wall") for t in traces
-                   if t.get("event") == "phase_change" and t.get("data", {}).get("to") == "thinking"), 0)
-        t_end = next((t.get("wall") for t in reversed(traces)
-                      if t.get("event") == "audio_queue_empty"), t0)
-        wall_sec = (t_end - t0) / 1000 if t0 and t_end else 0
-
         browser.close()
 
-    # Parse and report
-    segments = parse_traces(traces)
-    if not segments:
-        print("ERROR: No complete audio segments found in trace")
-        print(f"Trace event types: {[t.get('event') for t in traces]}")
+    # Compute metrics
+    metrics = compute_metrics(traces)
+    if not metrics:
+        print("ERROR: No complete trace data")
         sys.exit(1)
 
-    print_report(segments, wall_sec)
+    timeline = build_timeline(traces)
 
-    # Save raw trace for debugging
-    import json
+    print_gantt(timeline)
+    print_report(metrics)
+
+    # Save raw data
     out = PROJECT_ROOT / "tmp" / "perf-trace.json"
     out.parent.mkdir(parents=True, exist_ok=True)
     with open(out, "w", encoding="utf-8") as f:
         json.dump(traces, f, ensure_ascii=False, indent=2)
-    print(f"Raw trace saved to {out}")
+    print(f"Raw trace: {out}")
 
 
 if __name__ == "__main__":
