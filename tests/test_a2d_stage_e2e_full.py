@@ -26,6 +26,22 @@ pytestmark = pytest.mark.e2e
 
 ROUND_TIMEOUT = int(os.environ.get("A2D_E2E_ROUND_TIMEOUT", "240"))
 ROUND_COUNT = int(os.environ.get("A2D_E2E_ROUNDS", "3"))
+AUDIO_DRAIN_TIMEOUT = int(os.environ.get("A2D_E2E_AUDIO_DRAIN_TIMEOUT", "30"))
+
+
+def _wait_audio_drain(page, timeout: int = AUDIO_DRAIN_TIMEOUT) -> None:
+    """Wait for audio queue to empty after paused, then a grace period for playback."""
+    deadline = time.time() + timeout
+    drained = False
+    while time.time() < deadline:
+        page.wait_for_timeout(500)
+        events = extract_trace(page)
+        if any(e.get("event") == "audio_queue_empty" for e in events):
+            drained = True
+            break
+    # Extra grace period after audio queue emptied (or timeout)
+    grace = 3 if drained else 5
+    page.wait_for_timeout(grace * 1000)
 
 
 class TestFullDialogueFlow:
@@ -74,6 +90,9 @@ class TestFullDialogueFlow:
                     pytest.fail(f"Round failed with error: {msg[:200]}")
             else:
                 pytest.fail(f"Round timeout ({ROUND_TIMEOUT}s) — phase stuck at: {phase}")
+
+        # Wait for audio to finish playing before closing browser
+        _wait_audio_drain(page)
 
         # Extract trace and verify
         trace = extract_trace(page)
@@ -140,6 +159,9 @@ class TestFullDialogueFlow:
                         pytest.fail(f"Round {r+1} failed: {msg[:200]}")
                 else:
                     pytest.skip(f"Round {r+1} timeout at phase {phase} (env fault)")
+
+            # Wait for audio to finish playing before closing browser
+            _wait_audio_drain(page)
 
             # Per-round trace: small delay then drain
             page.wait_for_timeout(1000)
