@@ -552,14 +552,21 @@ class AIService:
                 else:
                     session.add_line(line)
 
+                # Honour A2D_SHOW_ACTIONS env var (default "1" = show)
+                show_actions = os.environ.get("A2D_SHOW_ACTIONS", "1") != "0"
+                final_display = line.display_text
+                if show_actions and line.action:
+                    final_display = f"{final_display}（{line.action}）"
+
                 return {
                     "type": "script_line",
                     "payload": {
                         "id": line.id,
                         "speaker": line.speaker,
                         "emotion": line.emotion,
-                        "display_text": line.display_text,
+                        "display_text": final_display,
                         "tts_text": line.tts_text,
+                        "action": line.action,
                         "index": line.index,
                     },
                 }
@@ -617,10 +624,11 @@ class AIService:
 这些是上下文提示，你需要根据它们自然对话，无需逐条回应。
 
 ## 单人标准发言格式
-你对每句话的回应要符合格式：【情绪】显示文本<TTS朗读文本>
+你对每句话的回应要符合格式：【情绪】显示文本<TTS语音朗读文本>
 - 【情绪】内为情绪标签，从以下选择：高兴、兴奋、生气、厌恶、无语、疑惑、慌张、担心、紧张、害怕、害羞、认真、调皮、尴尬、难为情、惊讶、心动、哭泣、自信、无奈
-- <TTS朗读文本> 尖括号内为语音合成朗读文本
-- 只会在必要的时候用括号（）来描述动作，不需要每一段回应都带有动作，（动作）放在对话末尾，同一行内。TTS朗读文本中不要包含动作。
+- <TTS语音朗读文本> 尖括号内为语音合成朗读文本
+- 只会在必要的时候用括号（）来描述动作，接在TTS语音朗读文本后面，不需要每一段回应都带有动作，（动作）放在对话末尾，同一行内。TTS语音朗读文本中不要包含动作。
+- 示例：【情绪】显示文本<TTS语音朗读文本>（动作）
 - 示例1：【羞耻】呀……！？<きゃんっ……！？>（稍稍后退）
 - 示例2：【羞耻】艾玛，你这个小笨狗。<エマ、このバカ犬。>
 - 不使用颜文字，每句话保持完整断句""")
@@ -643,7 +651,7 @@ class AIService:
             dual_names = [chars[k].character_folder for k in dual_lang_chars]
             tts_instruction = (
                 f"注意：{', '.join(dual_names)} 的显示语言与TTS语音语言不同，"
-                "这些角色需要提供<TTS朗读文本>。"
+                "这些角色需要提供<TTS语音朗读文本>。"
                 "TTS文本是对应语音语言的翻译。"
             )
         else:
@@ -664,8 +672,8 @@ class AIService:
         prompt_lines.append("规则：")
         prompt_lines.append("- speaker 使用上面定义的 speaker_id")
         # prompt_lines.append("- 【情绪】方括号内为情绪标签，从给定列表中选择")
-        # prompt_lines.append(f"- <TTS朗读文本> 尖括号内为TTS语音合成文本，{tts_instruction}")
-        # prompt_lines.append("- （动作描述）放在对话末尾，同一行内。TTS朗读文本中绝对不要包含动作描述")
+        # prompt_lines.append(f"- <TTS语音朗读文本> 尖括号内为TTS语音合成文本，{tts_instruction}")
+        # prompt_lines.append("- （动作描述）放在对话末尾，同一行内。TTS语音朗读文本中绝对不要包含动作描述")
         prompt_lines.append("- 可以根据对话历史和流向选择合适的发言者，用自然的对话节奏")
         char_names = [cfg.character_folder for cfg in chars.values()]
         # if len(char_names) > 1:
@@ -836,7 +844,13 @@ class AIService:
         tts_match = re.search(r"<(.+?)>", content)
         tts_text = tts_match.group(1) if tts_match else content
         display_text = re.sub(r"<.+?>", "", content).strip()
-        display_text = re.sub(r"（.+?）$", "", display_text).strip()
+
+        # Extract action （...）at end of line — preserve it as a separate field
+        action = ""
+        action_match = re.search(r"（(.+?)）$", display_text)
+        if action_match:
+            action = action_match.group(1)
+            display_text = re.sub(r"（.+?）$", "", display_text).strip()
 
         if not display_text:
             display_text = text
@@ -847,6 +861,7 @@ class AIService:
             emotion=emotion,
             display_text=display_text,
             tts_text=tts_text,
+            action=action,
             raw_text=text,  # preserve LLM original for KV-cache-friendly history
             state="approved",
         )

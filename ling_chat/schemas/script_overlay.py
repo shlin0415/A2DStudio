@@ -36,6 +36,7 @@ class ScriptLine:
     emotion: str = ""
     display_text: str = ""
     tts_text: str = ""
+    action: str = ""  # （动作描述）extracted from LLM output, separate from display_text
     raw_text: str = ""  # LLM original line preserved for KV-cache-friendly history
 
     state: Literal[

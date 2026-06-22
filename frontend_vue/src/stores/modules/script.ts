@@ -10,6 +10,7 @@ export interface ScriptLine {
   emotion?: string
   display_text: string
   tts_text: string
+  action?: string  // （动作描述）from LLM, shown when A2D_SHOW_ACTIONS != "0"
   index: number
   batch_index?: number
   batch_total?: number
