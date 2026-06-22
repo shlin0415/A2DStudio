@@ -784,9 +784,7 @@ dependencies = [
     { name = "pillow" },
     { name = "platformdirs" },
     { name = "py7zr" },
-    { name = "pynput" },
     { name = "python-multipart" },
-    { name = "pywebview" },
     { name = "pyyaml" },
     { name = "rapidocr-onnxruntime" },
     { name = "sqlmodel" },
@@ -795,13 +793,17 @@ dependencies = [
     { name = "websockets" },
 ]
 
-[package.dev-dependencies]
+[package.optional-dependencies]
 dev = [
     { name = "playwright" },
     { name = "pytest" },
     { name = "pytest-asyncio" },
     { name = "pytest-cov" },
     { name = "ruff" },
+]
+gui = [
+    { name = "pynput" },
+    { name = "pywebview" },
 ]
 
 [package.metadata]
@@ -817,26 +819,23 @@ requires-dist = [
     { name = "packaging", specifier = ">=21.0" },
     { name = "pillow", specifier = ">=10.0.0" },
     { name = "platformdirs", specifier = ">=4.3.8" },
+    { name = "playwright", marker = "extra == 'dev'", specifier = ">=1.60.0" },
     { name = "py7zr", specifier = ">=1.0.0" },
-    { name = "pynput", specifier = ">=1.8.1" },
+    { name = "pynput", marker = "extra == 'gui'", specifier = ">=1.8.1" },
+    { name = "pytest", marker = "extra == 'dev'", specifier = ">=7.0" },
+    { name = "pytest-asyncio", marker = "extra == 'dev'", specifier = ">=0.21.0" },
+    { name = "pytest-cov", marker = "extra == 'dev'", specifier = ">=6.2.1" },
     { name = "python-multipart", specifier = ">=0.0.20" },
-    { name = "pywebview", specifier = ">=5.4" },
+    { name = "pywebview", marker = "extra == 'gui'", specifier = ">=5.4" },
     { name = "pyyaml", specifier = ">=6.0.2" },
     { name = "rapidocr-onnxruntime", specifier = ">=1.4.4" },
+    { name = "ruff", marker = "extra == 'dev'", specifier = ">=0.14.10" },
     { name = "sqlmodel", specifier = ">=0.0.31" },
     { name = "tqdm", specifier = ">=4.65.0" },
     { name = "uvicorn", specifier = ">=0.35.0" },
     { name = "websockets", specifier = ">=15.0.1" },
 ]
-
-[package.metadata.requires-dev]
-dev = [
-    { name = "playwright", specifier = ">=1.60.0" },
-    { name = "pytest", specifier = ">=7.0" },
-    { name = "pytest-asyncio", specifier = ">=0.21.0" },
-    { name = "pytest-cov", specifier = ">=6.2.1" },
-    { name = "ruff", specifier = ">=0.14.10" },
-]
+provides-extras = ["gui", "dev"]
 
 [[package]]
 name = "mss"
