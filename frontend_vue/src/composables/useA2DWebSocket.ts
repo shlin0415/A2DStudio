@@ -9,34 +9,46 @@ import type { GameRole } from '@/stores/modules/game/state'
 let ws: WebSocket | null = null
 let connected = false
 let audioCtx: AudioContext | null = null
-let keepAliveTimer: ReturnType<typeof setInterval> | null = null
+let bgmNode: OscillatorNode | null = null
+let bgmGain: GainNode | null = null
+let mainAudio: HTMLAudioElement | null = null
 
-// ── Audio warm-up: keep Windows WASAPI hardware awake ──
+// ── Audio infrastructure: singleton element + BGM + Pre-Roll ──
 function warmUpAudio() {
   if (audioCtx) return
   try {
     audioCtx = new AudioContext()
-    // Play 100ms silence to wake up the audio pipeline, then keep ctx alive
-    const buffer = audioCtx.createBuffer(1, audioCtx.sampleRate / 10, audioCtx.sampleRate)
-    const source = audioCtx.createBufferSource()
-    source.buffer = buffer
-    source.connect(audioCtx.destination)
-    source.start()
-    // Ping every 20s to prevent browser auto-suspend of AudioContext
-    keepAliveTimer = setInterval(() => {
-      if (audioCtx?.state === 'suspended') audioCtx.resume()
-    }, 20000)
-    console.log('[A2D] Audio warm-up complete, AudioContext kept alive')
+
+    // Singleton audio element reused for all TTS — avoids cold MediaElement per line
+    mainAudio = new Audio()
+
+    // BGM: 60Hz sine at gain 0.005 keeps WASAPI awake, nearly inaudible
+    bgmNode = audioCtx.createOscillator()
+    bgmNode.type = 'sine'
+    bgmNode.frequency.value = 60
+    bgmGain = audioCtx.createGain()
+    bgmGain.gain.value = 0.005
+    bgmNode.connect(bgmGain)
+    bgmGain.connect(audioCtx.destination)
+    bgmNode.start()
+
+    console.log('[A2D] Audio warm-up: singleton Audio + BGM active')
   } catch {
-    // AudioContext not available — no warm-up
+    // AudioContext not available
   }
 }
 
 function shutdownAudio() {
-  if (keepAliveTimer) { clearInterval(keepAliveTimer); keepAliveTimer = null }
+  if (bgmNode) { try { bgmNode.stop() } catch {}; bgmNode = null }
+  if (bgmGain) { bgmGain = null }
   if (audioCtx) {
     audioCtx.close().catch(() => {})
     audioCtx = null
+  }
+  if (mainAudio) {
+    mainAudio.pause()
+    mainAudio.src = ''
+    mainAudio = null
   }
 }
 
@@ -47,13 +59,11 @@ const speakerToRoleId: Record<string, number> = {}
 const audioQueue: { url: string; lineId: string }[] = []
 let isAudioPlaying = false
 
-function playNextInQueue(store?: ReturnType<typeof import('@/stores/modules/script')['useScriptStore']>) {
+async function playNextInQueue(store?: ReturnType<typeof import('@/stores/modules/script')['useScriptStore']>) {
   if (audioQueue.length === 0) {
     isAudioPlaying = false
     if (store) {
       store.isAudioPlaying = false
-      // Do NOT clear playingLineId — keep it so activeLine stays on
-      // the last spoken line during the gap before next tts_ready.
     }
     emitTrace('audio_queue_empty')
     return
@@ -61,13 +71,12 @@ function playNextInQueue(store?: ReturnType<typeof import('@/stores/modules/scri
   isAudioPlaying = true
   const item = audioQueue.shift()!
   emitTrace('audio_start', { lineId: item.lineId })
-  // Sync subtitle to the line whose audio is about to play
+
   if (store) {
     store.isAudioPlaying = true
     store.playingLineId = item.lineId
     emitTrace('playingLine', { lineId: item.lineId })
 
-    // Sync emotion: lookup speaker+emotion from store.lines
     const gameStore = useGameStore()
     const line = store.lines.find(l => l.id === item.lineId)
     if (line) {
@@ -83,7 +92,20 @@ function playNextInQueue(store?: ReturnType<typeof import('@/stores/modules/scri
       }
     }
   }
-  const audio = new Audio(item.url)
+
+  // Use singleton audio element or fallback to new Audio
+  const audio = mainAudio || new Audio()
+  audio.src = item.url
+  audio.load()
+
+  // ── Muted Pre-Roll: wake WASAPI hardware silently ──
+  audio.muted = true
+  try { await audio.play() } catch { /* autoplay blocked, proceed */ }
+  await new Promise(r => setTimeout(r, 200))
+  audio.muted = false
+  audio.currentTime = 0
+
+  // ── Real playback ──
   audio.onended = () => {
     emitTrace('audio_end', { lineId: item.lineId })
     playNextInQueue(store)
