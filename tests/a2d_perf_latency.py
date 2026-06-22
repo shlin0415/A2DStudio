@@ -88,7 +88,7 @@ def parse_traces(traces: list[dict]) -> list[dict]:
         t_as = seg.get("t_audio_start", t_pe)
         t_ae = seg["t_audio_end"]
 
-        # LLM: from script_line WS receipt to tts_ready WS receipt (backend TTS done)
+        # LLM+TTS: from script_line WS receipt to tts_ready WS receipt (backend combined)
         llm_ms = (t_ws_tts - t_ws_sl) if t_ws_tts else 0
 
         # Queue wait: from audio_queued to preroll_start
@@ -104,7 +104,6 @@ def parse_traces(traces: list[dict]) -> list[dict]:
         total_ms = t_ae - t_ws_sl
 
         seg["llm_ms"] = llm_ms
-        seg["tts_ms"] = t_ws_tts - t_q if t_ws_tts else 0  # TTS synthesis (ws_tts_ready - audio_queued ≈ same)
         seg["queue_ms"] = queue_ms
         seg["preroll_ms"] = preroll_ms
         seg["audio_ms"] = audio_ms
@@ -123,44 +122,40 @@ def print_report(segments: list[dict], wall_sec: float) -> None:
     print("  A2D Pipeline Latency Report  (batch_size=5)")
     print(f"  Total wall time: {wall_sec:.1f}s")
     print("=" * 95)
-    print(f"  {'#':>2} {'Spk':>4}  {'LLM':>6}  {'TTS':>6}  {'Queue':>6}  {'PreRoll':>8}  {'Audio':>6}  {'Total':>7}  {'Overlap':>8}")
-    print(f"  {'':->2} {'':->4}  {'':->6}  {'':->6}  {'':->6}  {'':->8}  {'':->6}  {'':->7}  {'':->8}")
+    print(f"  {'#':>2} {'Spk':>4}  {'LLM+TTS':>8}  {'WaitNext':>9}  {'PreRoll':>8}  {'Audio':>6}  {'Total':>7}  {'Overlap':>8}")
+    print(f"  {'':->2} {'':->4}  {'':->8}  {'':->9}  {'':->8}  {'':->6}  {'':->7}  {'':->8}")
 
     prev_ae = 0
     for i, seg in enumerate(segments):
-        # Overlap: how much of this line's pipeline was hidden by previous line's playback
         t_ws_sl = seg.get("t_ws_script_line", 0)
         overlap_ms = max(0, prev_ae - t_ws_sl) if prev_ae > 0 else 0
         overlap_s = f"{overlap_ms:.0f}ms" if overlap_ms < 1000 else f"{overlap_ms/1000:.1f}s"
 
         print(
             f"  {i+1:>2} {seg.get('speaker', '?'):>4}  "
-            f"{seg['llm_ms']:>5.0f}ms  {seg['tts_ms']:>5.0f}ms  "
-            f"{seg['queue_ms']:>5.0f}ms  {seg['preroll_ms']:>7.0f}ms  "
+            f"{seg['llm_ms']:>7.0f}ms  {seg['queue_ms']:>8.0f}ms  "
+            f"{seg['preroll_ms']:>7.0f}ms  "
             f"{seg['audio_ms']:>5.0f}ms  {seg['total_ms']:>6.0f}ms  {overlap_s:>8}"
         )
         prev_ae = seg.get("t_audio_end", 0)
 
-    # Summary row
     if segments:
         avg_llm = sum(s["llm_ms"] for s in segments) / len(segments)
-        avg_tts = sum(s["tts_ms"] for s in segments) / len(segments)
         avg_queue = sum(s["queue_ms"] for s in segments) / len(segments)
         avg_preroll = sum(s["preroll_ms"] for s in segments) / len(segments)
         avg_audio = sum(s["audio_ms"] for s in segments) / len(segments)
-        total_wall_ms = wall_sec * 1000
         hidden = sum(max(0, segments[i-1].get("t_audio_end", 0) - s.get("t_ws_script_line", 0))
                      for i, s in enumerate(segments) if i > 0)
-        print(f"  {'':->2} {'':->4}  {'':->6}  {'':->6}  {'':->6}  {'':->8}  {'':->6}  {'':->7}  {'':->8}")
+        print(f"  {'':->2} {'':->4}  {'':->8}  {'':->9}  {'':->8}  {'':->6}  {'':->7}  {'':->8}")
         print(
             f"  {'AVG':>2} {'':>4}  "
-            f"{avg_llm:>5.0f}ms  {avg_tts:>5.0f}ms  "
-            f"{avg_queue:>5.0f}ms  {avg_preroll:>7.0f}ms  "
+            f"{avg_llm:>7.0f}ms  {avg_queue:>8.0f}ms  "
+            f"{avg_preroll:>7.0f}ms  "
             f"{avg_audio:>5.0f}ms  "
         )
         print()
         print(f"  Pipeline efficiency: {hidden/1000:.1f}s hidden by audio overlap "
-              f"({hidden/wall_ms*100:.0f}% of {wall_sec:.1f}s wall time)")
+              f"({hidden/(wall_sec*1000)*100:.0f}% of {wall_sec:.1f}s wall time)")
 
     print("=" * 95)
     print()
