@@ -100,20 +100,16 @@ async def _send_a2d_characters(session, send: SendFn) -> list[dict]:
 
 
 async def _generate_and_synthesize(ai_service, send: SendFn) -> int:
-    """Generate script lines + synthesize TTS. Iterates batch_size times,
-    calling LLM once per line (batch_size=1 × N iterations).
+    """Stream generate + synthesize: LLM → script_line → TTS → tts_ready per line.
 
-    Collects all results first so batch_total reflects actual script_line count
-    (not iteration count — merged action lines reduce the count). Then sends
-    each line with correct batch_index/batch_total, followed by TTS synthesis.
+    Each iteration: status(thinking) → LLM → send script_line →
+    status(synthesizing) → TTS → send tts_ready.
+    Final: status(paused).
 
-    Sends per line: status(thinking) → [all lines buffered] → script_line →
-    status(synthesizing) → tts_ready
-    Final: status(paused)
     On error: pops generated lines, sends error message, returns 0.
     """
     session = ai_service.a2d_session
-    results: list[dict] = []  # buffer results to compute actual batch_total
+    line_count = 0  # successfully generated lines (for batch_index)
 
     try:
         for i in range(session.batch_size):
@@ -130,22 +126,19 @@ async def _generate_and_synthesize(ai_service, send: SendFn) -> int:
             )
 
             if not result:
-                # None can mean: (a) LLM returned nothing, or (b) action line was
-                # merged into previous line (AC-1). In either case, continue to
-                # next iteration — don't halt the batch.
+                # None: (a) LLM returned nothing, or (b) action line merged into
+                # previous line. Continue next iteration.
                 continue
+
+            line_count += 1
+            result["payload"]["batch_index"] = line_count
+            result["payload"]["batch_total"] = session.batch_size
 
             # Log raw LLM response for monitor extraction
             raw_preview = session.last_raw_llm_response[:2000]
             logger.info(f"A2D LLM raw response ({len(session.last_raw_llm_response)} chars):\n{raw_preview}")
 
-            results.append(result)
-
-        # Now we know the actual script_line count — batch_total = len(results)
-        actual_total = len(results)
-        for i, result in enumerate(results, 1):
-            result["payload"]["batch_index"] = i
-            result["payload"]["batch_total"] = actual_total
+            # Send script_line immediately (streaming)
             await send(result)
 
             pl = result.get("payload")
@@ -183,13 +176,13 @@ async def _generate_and_synthesize(ai_service, send: SendFn) -> int:
                 logger.warning(f"A2D TTS failed (non-fatal): {tts_e}")
 
         await send({"type": "status", "payload": {"phase": "paused"}})
-        session.last_batch_count = actual_total
-        return actual_total
+        session.last_batch_count = line_count
+        return line_count
 
     except Exception as e:
         logger.error(f"A2D generate+synthesize failed: {e}")
         # Pop generated lines from session
-        for _ in range(len(results)):
+        for _ in range(line_count):
             if session.script_lines:
                 session.script_lines.pop()
         session.last_batch_count = 0
