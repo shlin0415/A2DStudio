@@ -45,6 +45,11 @@ class TestFullDialogueFlow:
         except Exception:
             pytest.skip("WebSocket connection timeout (environment fault)")
 
+        # Set batch_size to 3 before starting
+        batch_input = page.locator('.batch-input')
+        if batch_input.is_visible():
+            batch_input.fill('3')
+
         # Click "开始对话"
         start_btn = page.locator("button:has-text('开始对话')")
         if not start_btn.is_visible(timeout=5000):
@@ -104,6 +109,11 @@ class TestFullDialogueFlow:
 
         fast_mode = os.environ.get("A2D_E2E_FAST", "").strip() in ("1", "true", "yes")
         target_rounds = 2 if fast_mode else ROUND_COUNT
+
+        # Set batch_size to 3 before first round
+        batch_input = page.locator('.batch-input')
+        if batch_input.is_visible():
+            batch_input.fill('3')
 
         completed_rounds = 0
         all_traces: list[dict] = []  # accumulate across rounds for cross-round assertions

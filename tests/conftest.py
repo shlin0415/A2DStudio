@@ -161,6 +161,9 @@ def page(full_stack, request):
     from playwright.sync_api import sync_playwright
 
     headed = request.config.getoption("--headed", False)
+    # Default to headed unless A2D_E2E_HEADLESS=1
+    if not headed and os.environ.get("A2D_E2E_HEADLESS", "").strip() not in ("1", "true", "yes"):
+        headed = True
 
     with sync_playwright() as p:
         browser = p.chromium.launch(headless=not headed)
