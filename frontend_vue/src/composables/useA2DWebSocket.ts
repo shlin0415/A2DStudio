@@ -8,21 +8,35 @@ import type { GameRole } from '@/stores/modules/game/state'
 // ── Singleton: shared WS across all components ─────────
 let ws: WebSocket | null = null
 let connected = false
-let audioWarmedUp = false
+let audioCtx: AudioContext | null = null
+let keepAliveTimer: ReturnType<typeof setInterval> | null = null
 
-// ── Audio warm-up: wake up Windows WASAPI hardware ────
+// ── Audio warm-up: keep Windows WASAPI hardware awake ──
 function warmUpAudio() {
-  if (audioWarmedUp) return
+  if (audioCtx) return
   try {
-    const ctx = new AudioContext()
-    const buffer = ctx.createBuffer(1, ctx.sampleRate / 10, ctx.sampleRate) // 100ms silence
-    const source = ctx.createBufferSource()
+    audioCtx = new AudioContext()
+    // Play 100ms silence to wake up the audio pipeline, then keep ctx alive
+    const buffer = audioCtx.createBuffer(1, audioCtx.sampleRate / 10, audioCtx.sampleRate)
+    const source = audioCtx.createBufferSource()
     source.buffer = buffer
-    source.connect(ctx.destination)
-    source.onended = () => { ctx.close(); audioWarmedUp = true }
+    source.connect(audioCtx.destination)
     source.start()
+    // Ping every 20s to prevent browser auto-suspend of AudioContext
+    keepAliveTimer = setInterval(() => {
+      if (audioCtx?.state === 'suspended') audioCtx.resume()
+    }, 20000)
+    console.log('[A2D] Audio warm-up complete, AudioContext kept alive')
   } catch {
-    audioWarmedUp = true  // don't retry if AudioContext fails
+    // AudioContext not available — no warm-up
+  }
+}
+
+function shutdownAudio() {
+  if (keepAliveTimer) { clearInterval(keepAliveTimer); keepAliveTimer = null }
+  if (audioCtx) {
+    audioCtx.close().catch(() => {})
+    audioCtx = null
   }
 }
 
@@ -235,6 +249,7 @@ export function useA2DWebSocket() {
   }
 
   function disconnect() {
+    shutdownAudio()
     if (ws) {
       ws.close()
       ws = null
