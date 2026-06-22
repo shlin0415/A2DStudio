@@ -130,6 +130,7 @@ async function playNextInQueue(store?: ReturnType<typeof import('@/stores/module
   audio.load()
 
   // ── Muted Pre-Roll: wake WASAPI hardware silently ──
+  emitTrace('preroll_start', { lineId: item.lineId, firstPlay: audioFirstPlay })
   audio.muted = true
   try { await audio.play() } catch { /* autoplay blocked, proceed */ }
   const preRollMs = audioFirstPlay ? 500 : 200
@@ -137,6 +138,7 @@ async function playNextInQueue(store?: ReturnType<typeof import('@/stores/module
   audio.muted = false
   audio.currentTime = 0
   audioFirstPlay = false
+  emitTrace('preroll_end', { lineId: item.lineId, preRollMs })
 
   // ── Real playback ──
   audio.onended = () => {
@@ -219,20 +221,18 @@ export function useA2DWebSocket() {
           break
         }
         case 'script_line': {
+          emitTrace('ws_script_line', { lineId: (msg.payload as any)?.id })
           store.addLine(msg.payload as ScriptLine)
-          // Emotion is now set in playNextInQueue when audio actually starts,
-          // not when script_line arrives. See playNextInQueue for the sync logic.
           break
         }
         case 'tts_ready': {
-          // Do NOT set paused here — status(paused) from backend signals batch end.
-          // Multi-line batches send tts_ready per line; paused only after the last one.
           const audioPath = msg.payload?.audio_path
+          const lineId = (msg.payload?.id as string) || ''
+          emitTrace('ws_tts_ready', { lineId })
           if (audioPath) {
             const url = audioPath.startsWith('/')
               ? `http://${window.location.hostname}:8765${audioPath}`
               : audioPath
-            const lineId = (msg.payload?.id as string) || ''
             emitTrace('audio_queued', { lineId })
             // Queue {url, lineId} for sequential playback + subtitle sync
             audioQueue.push({ url, lineId })
