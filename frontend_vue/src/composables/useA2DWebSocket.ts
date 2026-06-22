@@ -8,6 +8,23 @@ import type { GameRole } from '@/stores/modules/game/state'
 // ── Singleton: shared WS across all components ─────────
 let ws: WebSocket | null = null
 let connected = false
+let audioWarmedUp = false
+
+// ── Audio warm-up: wake up Windows WASAPI hardware ────
+function warmUpAudio() {
+  if (audioWarmedUp) return
+  try {
+    const ctx = new AudioContext()
+    const buffer = ctx.createBuffer(1, ctx.sampleRate / 10, ctx.sampleRate) // 100ms silence
+    const source = ctx.createBufferSource()
+    source.buffer = buffer
+    source.connect(ctx.destination)
+    source.onended = () => { ctx.close(); audioWarmedUp = true }
+    source.start()
+  } catch {
+    audioWarmedUp = true  // don't retry if AudioContext fails
+  }
+}
 
 // speaker-to-roleId mapping built from a2d.characters payload
 const speakerToRoleId: Record<string, number> = {}
@@ -78,6 +95,7 @@ export function useA2DWebSocket() {
     ws.onopen = () => {
       connected = true
       console.log('[A2D] WebSocket connected')
+      warmUpAudio()
     }
 
     ws.onmessage = (event) => {
