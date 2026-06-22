@@ -12,15 +12,46 @@ let audioCtx: AudioContext | null = null
 let bgmNode: OscillatorNode | null = null
 let bgmGain: GainNode | null = null
 let mainAudio: HTMLAudioElement | null = null
+let audioFirstPlay = true
+
+// ── Generate silent WAV (0.5s, 44100Hz mono 16-bit) ────
+function silentWavBlob(): Blob {
+  const sampleRate = 44100
+  const duration = 0.5
+  const numSamples = Math.floor(sampleRate * duration)
+  const dataSize = numSamples * 2  // 16-bit mono
+  const headerSize = 44
+  const buf = new ArrayBuffer(headerSize + dataSize)
+  const view = new DataView(buf)
+  const write = (o: number, s: string) => { for (let i = 0; i < s.length; i++) view.setUint8(o + i, s.charCodeAt(i)) }
+  write(0, 'RIFF'); view.setUint32(4, 36 + dataSize, true); write(8, 'WAVE')
+  write(12, 'fmt '); view.setUint32(16, 16, true); view.setUint16(20, 1, true)
+  view.setUint16(22, 1, true); view.setUint32(24, sampleRate, true)
+  view.setUint32(28, sampleRate * 2, true); view.setUint16(32, 2, true); view.setUint16(34, 16, true)
+  write(36, 'data'); view.setUint32(40, dataSize, true)
+  // PCM data already zero (silent)
+  return new Blob([buf], { type: 'audio/wav' })
+}
 
 // ── Audio infrastructure: singleton element + BGM + Pre-Roll ──
-function warmUpAudio() {
+async function warmUpAudio() {
   if (audioCtx) return
   try {
     audioCtx = new AudioContext()
 
     // Singleton audio element reused for all TTS — avoids cold MediaElement per line
     mainAudio = new Audio()
+
+    // Warm the MediaElement pipeline with silent WAV (WASAPI + codec)
+    const silentUrl = URL.createObjectURL(silentWavBlob())
+    mainAudio.src = silentUrl
+    mainAudio.muted = true
+    try { await mainAudio.play() } catch { /* autoplay blocked */ }
+    await new Promise(r => setTimeout(r, 600))
+    mainAudio.pause()
+    mainAudio.currentTime = 0
+    mainAudio.muted = false
+    URL.revokeObjectURL(silentUrl)
 
     // BGM: 60Hz sine at gain 0.005 keeps WASAPI awake, nearly inaudible
     bgmNode = audioCtx.createOscillator()
@@ -32,7 +63,7 @@ function warmUpAudio() {
     bgmGain.connect(audioCtx.destination)
     bgmNode.start()
 
-    console.log('[A2D] Audio warm-up: singleton Audio + BGM active')
+    console.log('[A2D] Audio warm-up: element pre-warmed + BGM active')
   } catch {
     // AudioContext not available
   }
@@ -101,9 +132,11 @@ async function playNextInQueue(store?: ReturnType<typeof import('@/stores/module
   // ── Muted Pre-Roll: wake WASAPI hardware silently ──
   audio.muted = true
   try { await audio.play() } catch { /* autoplay blocked, proceed */ }
-  await new Promise(r => setTimeout(r, 200))
+  const preRollMs = audioFirstPlay ? 500 : 200
+  await new Promise(r => setTimeout(r, preRollMs))
   audio.muted = false
   audio.currentTime = 0
+  audioFirstPlay = false
 
   // ── Real playback ──
   audio.onended = () => {
