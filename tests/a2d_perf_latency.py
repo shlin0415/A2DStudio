@@ -43,7 +43,7 @@ def parse_traces(traces: list[dict]) -> list[dict]:
     for i, e in enumerate(traces):
         evt = e.get("event", "")
         ts = e.get("ts", 0)
-        data = e.get("data", {})
+        data = e.get("data") or {}
         lid = data.get("lineId") or data.get("id") or ""
 
         if evt == "ws_script_line":
