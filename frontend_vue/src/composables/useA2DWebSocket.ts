@@ -165,6 +165,7 @@ export function useA2DWebSocket() {
 
     ws.onopen = () => {
       connected = true
+      ;(window as any).__a2d_ws_connected = true
       console.log('[A2D] WebSocket connected')
       warmUpAudio()
     }
