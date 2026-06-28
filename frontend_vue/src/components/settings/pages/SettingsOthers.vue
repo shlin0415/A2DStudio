@@ -34,51 +34,61 @@
       </MenuItem>
     </MenuPage>
 
-  <!-- 滑入面板 -->
-  <Teleport to="body">
-    <Transition name="advance-slide">
-      <div v-if="showAdvancePanel" class="advance-slide-wrapper">
-        <!-- 模糊遮罩 — 使用与 SettingsPanel 一致的 blur 效果 -->
-        <div class="advance-slide-overlay" @click="closePanel"></div>
+    <!-- 滑入面板 -->
+    <Teleport to="body">
+      <Transition name="advance-slide">
+        <div v-if="showAdvancePanel" class="advance-slide-wrapper">
+          <!-- 模糊遮罩 — 使用与 SettingsPanel 一致的 blur 效果 -->
+          <div class="advance-slide-overlay" @click="closePanel"></div>
 
-        <!-- 面板容器：透明底，内容自带玻璃效果 -->
-        <div class="advance-slide-panel">
-          <div class="advance-slide-header">
-            <button class="advance-back-btn" @click="closePanel">
-              <Icon icon="close" :size="28" />
-            </button>
-            <div class="advance-header-title">
-              <Icon icon="advance" :size="20" />
-              <span>高级设置</span>
+          <!-- 面板容器：透明底，内容自带玻璃效果 -->
+          <div class="advance-slide-panel">
+            <div class="advance-slide-header">
+              <div class="advance-header-title">
+                <Icon icon="advance" :size="20" />
+                <span>高级设置</span>
+              </div>
+              <button class="advance-back-btn" @click="closePanel">
+                <Icon icon="close" :size="28" />
+              </button>
+            </div>
+
+            <div class="advance-slide-content">
+              <SettingsAdvance ref="settingsAdvanceRef" @remove-more-menu-from-b="onRemoveFromB" />
             </div>
           </div>
-
-          <div class="advance-slide-content">
-            <SettingsAdvance
-              ref="settingsAdvanceRef"
-              @remove-more-menu-from-b="onRemoveFromB"
-            />
-          </div>
         </div>
-      </div>
-    </Transition>
-  </Teleport>
+      </Transition>
+    </Teleport>
 
-  <!-- LLM 配置面板 -->
-  <SettingsLlmConfig v-if="showLlmPanel" @close="showLlmPanel = false" />
+    <!-- LLM 配置面板 -->
+    <SettingsLlmConfig v-if="showLlmPanel" @close="closeLlmPanel" />
   </div>
 </template>
 
 <script setup lang="ts">
-import { ref } from 'vue'
+import { ref, watch } from 'vue'
+import { useUIStore } from '../../../stores/modules/ui/ui'
 import { MenuPage, MenuItem } from '../../ui'
 import Icon from '../../base/widget/Icon.vue'
 import SettingsAdvance from './SettingsAdvance.vue'
 import SettingsLlmConfig from './SettingsLlmConfig.vue'
 
+const uiStore = useUIStore()
 const showAdvancePanel = ref(false)
 const showLlmPanel = ref(false)
 const settingsAdvanceRef = ref<InstanceType<typeof SettingsAdvance> | null>(null)
+
+// 监听外部触发的 LLM 配置面板打开/关闭请求（来自新手教程）
+watch(() => uiStore.showLlmConfig, (val) => {
+  showLlmPanel.value = val
+})
+
+/** 关闭 LLM 配置面板时同步重置 store 状态 */
+function closeLlmPanel() {
+  showLlmPanel.value = false
+  uiStore.showLlmConfig = false
+}
 
 const emit = defineEmits(['remove-more-menu-from-b'])
 
