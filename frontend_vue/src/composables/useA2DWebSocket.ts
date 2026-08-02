@@ -222,18 +222,20 @@ export function useA2DWebSocket() {
           break
         }
         case 'script_line': {
-          emitTrace('ws_script_line', { lineId: (msg.payload as any)?.id })
+          // tts_text: ground-truth for ASR eval (trace_hook capture mode)
+          emitTrace('ws_script_line', { lineId: (msg.payload as any)?.id, tts_text: (msg.payload as any)?.tts_text })
           store.addLine(msg.payload as ScriptLine)
           break
         }
         case 'tts_ready': {
           const audioPath = msg.payload?.audio_path
           const lineId = (msg.payload?.id as string) || ''
-          emitTrace('ws_tts_ready', { lineId })
           if (audioPath) {
             const url = audioPath.startsWith('/')
               ? `http://${window.location.hostname}:8765${audioPath}`
               : audioPath
+            // audio_url: real-usage audio source for ASR eval (trace_hook capture mode)
+            emitTrace('ws_tts_ready', { lineId, audio_url: url })
             emitTrace('audio_queued', { lineId })
             // Queue {url, lineId} for sequential playback + subtitle sync
             audioQueue.push({ url, lineId })
