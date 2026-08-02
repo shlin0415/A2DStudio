@@ -4,9 +4,13 @@
 保持一致的结构化数据，供前端配置界面展示。
 """
 
-import tomllib
 from pathlib import Path
 from typing import Any, Dict, List, Optional
+
+try:
+    import tomllib  # Python 3.11+ stdlib
+except ImportError:
+    import tomli as tomllib  # Python 3.10 backport (tomli package)
 
 from ling_chat.configs.llm_config import llm_config
 from ling_chat.core.logger import logger

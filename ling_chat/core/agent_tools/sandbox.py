@@ -5,6 +5,7 @@ LingChat Agent 沙盒工具
 
 import os
 import re
+import shlex
 import shutil
 import stat
 import subprocess
@@ -529,12 +530,20 @@ def sandbox_execute_command(command: str, timeout: int = 30) -> dict[str, Any]:
         # 设置超时
         timeout_val = min(max(timeout, 1), 120)  # 1-120 秒
         python_runner_args = _python_runner_args(command)
-        command_to_run = python_runner_args or _rewrite_python_command(command)
+        if python_runner_args is not None:
+            cmd_list = python_runner_args
+        else:
+            # SECURITY: always use list-based exec with shell=False.
+            # shlex.split() safely parses the command into argv without
+            # invoking a shell, preventing command chaining via ; && | $().
+            cmd_list = shlex.split(command)
+            if not cmd_list:
+                return {"ok": False, "error": "Empty command"}
 
         # 执行命令，限制工作目录
         result = subprocess.run(
-            command_to_run,
-            shell=python_runner_args is None,
+            cmd_list,
+            shell=False,
             cwd=str(SANDBOX_DIR),
             capture_output=True,
             text=True,
@@ -548,9 +557,7 @@ def sandbox_execute_command(command: str, timeout: int = 30) -> dict[str, Any]:
         return {
             "ok": result.returncode == 0,
             "command": command,
-            "resolved_command": command_to_run
-            if isinstance(command_to_run, str)
-            else " ".join(command_to_run),
+            "resolved_command": shlex.join(cmd_list),
             "returncode": result.returncode,
             "stdout": stdout,
             "stderr": stderr,

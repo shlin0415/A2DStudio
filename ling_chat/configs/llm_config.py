@@ -5,9 +5,13 @@
 
 import os
 import threading
-import tomllib
 from pathlib import Path
 from typing import Any, Callable, Dict, List, Optional
+
+try:
+    import tomllib  # Python 3.11+ stdlib
+except ImportError:
+    import tomli as tomllib  # Python 3.10 backport (tomli package)
 
 from ling_chat.core.logger import logger
 from ling_chat.utils.runtime_path import package_root
