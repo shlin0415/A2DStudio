@@ -511,6 +511,33 @@ def _validate_command(command: str) -> tuple[bool, str]:
     return True, ""
 
 
+def _resolve_command_paths(command: str) -> str:
+    """Resolve path arguments in file-mutating commands to sandbox-safe paths.
+
+    Prevents sandbox escape via ../../etc/passwd style traversal.
+    Commands not in the path-mutating set are returned unchanged.
+    """
+    cmd_parts = command.strip().split()
+    if not cmd_parts:
+        return command
+    base_cmd = _command_name(cmd_parts[0])
+    _path_mutating = {"rm", "rmdir", "cp", "mv", "cat", "head", "tail", "find"}
+    if base_cmd not in _path_mutating:
+        return command
+    resolved_parts = [cmd_parts[0]]
+    for arg in cmd_parts[1:]:
+        if arg.startswith("-"):
+            resolved_parts.append(arg)
+            continue
+        try:
+            safe = _resolve_sandbox_path(arg)
+            resolved_parts.append(str(safe.relative_to(SANDBOX_DIR)))
+        except (PermissionError, ValueError):
+            # Path escapes sandbox — replace with a safe fallback inside sandbox
+            resolved_parts.append(".")
+    return " ".join(resolved_parts)
+
+
 def sandbox_execute_command(command: str, timeout: int = 30) -> dict[str, Any]:
     """在沙盒内安全执行命令"""
     # 环境变量控制
@@ -529,14 +556,16 @@ def sandbox_execute_command(command: str, timeout: int = 30) -> dict[str, Any]:
     try:
         # 设置超时
         timeout_val = min(max(timeout, 1), 120)  # 1-120 秒
-        python_runner_args = _python_runner_args(command)
+        # Resolve path args in file-mutating commands to prevent sandbox escape
+        safe_command = _resolve_command_paths(command)
+        python_runner_args = _python_runner_args(safe_command)
         if python_runner_args is not None:
             cmd_list = python_runner_args
         else:
             # SECURITY: always use list-based exec with shell=False.
             # shlex.split() safely parses the command into argv without
             # invoking a shell, preventing command chaining via ; && | $().
-            cmd_list = shlex.split(command)
+            cmd_list = shlex.split(safe_command)
             if not cmd_list:
                 return {"ok": False, "error": "Empty command"}
 

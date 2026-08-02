@@ -219,7 +219,22 @@ class WebSocketManager:
         async def send(msg: dict):
             await self.send_to_client(client_id, msg)
 
-        handled = await dispatch(msg_type, ai_service, client_id, payload, send)
+        try:
+            handled = await dispatch(msg_type, ai_service, client_id, payload, send)
+        except Exception as e:
+            logger.exception(f"A2D handler error for '{msg_type}': {e}")
+            await self.send_to_client(client_id, {
+                "type": "error",
+                "payload": {
+                    "error_type": "handler_error",
+                    "message": f"A2D handler failed: {type(e).__name__}",
+                    "detail": str(e)[:200],
+                    "generation_id": payload.get("generation_id", ""),
+                    "retry_count": 0,
+                    "max_retries": 3,
+                },
+            })
+            return
         if not handled:
             logger.warning(f"A2D: no handler for message type '{msg_type}'")
             await self.send_to_client(client_id, {

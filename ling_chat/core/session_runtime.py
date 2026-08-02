@@ -105,11 +105,16 @@ class SessionRuntime:
         speaker_map = {ln.id: ln.speaker for ln in self.script_lines}
         emotion_map = {ln.id: ln.emotion for ln in self.script_lines}
 
-        first_modified_idx = min(
+        idx_entries = [
             self._find_line_index(ln.get("id", ""))
             for ln in modified_lines
             if ln.get("id")
-        )
+        ]
+        if not idx_entries:
+            # All edits are new lines (no existing ID) — append after current script
+            first_modified_idx = len(self.script_lines)
+        else:
+            first_modified_idx = min(idx_entries)
 
         # Truncate from first modified index
         self.script_lines = self.script_lines[:first_modified_idx]
