@@ -97,14 +97,14 @@ DANGEROUS_PATTERNS = [
 
 
 def _resolve_sandbox_path(relative_path: str) -> Path:
-    """解析沙盒内路径，防止路径遍历攻击"""
-    # 规范化路径：先基于沙盒目录拼接，再 resolve，防止 .. 遍历
-    # 不能直接 resolve relative_path，否则在 Windows 上 . 会变成当前工作目录的绝对路径
-    raw_parts = Path(relative_path).parts
-    # 过滤掉 .. 和 .，只保留正常路径组件
-    safe_parts = [p for p in raw_parts if p not in (".", "..")]
-    full_path = (SANDBOX_DIR / Path(*safe_parts)).resolve()
-    # 安全检查：路径必须在沙盒目录下
+    """Resolve a path inside the sandbox, preventing directory traversal.
+
+    Uses resolve() to normalize the path, then relative_to() to verify
+    it stays within SANDBOX_DIR. The relative_to() check is the actual
+    security boundary — resolve() alone cannot escape because we join
+    with SANDBOX_DIR first.
+    """
+    full_path = (SANDBOX_DIR / relative_path).resolve()
     try:
         full_path.relative_to(SANDBOX_DIR.resolve())
     except ValueError:

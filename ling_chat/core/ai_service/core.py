@@ -766,8 +766,9 @@ class AIService:
         return messages
 
     async def _a2d_call_llm_with_retry(self, messages: list[dict]) -> str:
-        """Call LLM with retry logic (3 attempts, 5s/15s/30s backoff)."""
+        """Call LLM with retry logic (3 attempts, 5s/15s backoff)."""
         last_error = None
+        backoff_delays = [5, 15]
         for attempt in range(3):
             try:
                 full_text = ""
@@ -789,16 +790,16 @@ class AIService:
                 raise RuntimeError("LLM returned empty response")
             except asyncio.TimeoutError as e:
                 last_error = e
-                if attempt < 2:
-                    delay = [5, 15, 30][attempt]
+                if attempt < len(backoff_delays):
+                    delay = backoff_delays[attempt]
                     logger.warning(
                         f"A2D LLM timeout attempt {attempt+1}/3, retrying in {delay}s"
                     )
                     await asyncio.sleep(delay)
             except Exception as e:
                 last_error = e
-                if attempt < 2:
-                    delay = [5, 15, 30][attempt]
+                if attempt < len(backoff_delays):
+                    delay = backoff_delays[attempt]
                     logger.warning(
                         f"A2D LLM error attempt {attempt+1}/3: {e}, retrying in {delay}s"
                     )
