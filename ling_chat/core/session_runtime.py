@@ -190,6 +190,13 @@ class SessionRuntime:
                     stage.line_ids.append(line_id)
                 return
 
+    def delete_stage(self, stage_id: str) -> None:
+        """Remove a stage and clear associated ScriptLine.stage_id references."""
+        self.stages = [s for s in self.stages if s.id != stage_id]
+        for line in self.script_lines:
+            if line.stage_id == stage_id:
+                line.stage_id = ""
+
     def get_stage(self, stage_id: str) -> Stage | None:
         for s in self.stages:
             if s.id == stage_id:

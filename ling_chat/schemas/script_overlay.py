@@ -1,7 +1,10 @@
 """Script-related data models"""
+import logging
 import uuid
 from dataclasses import dataclass, field
 from typing import Literal, Optional
+
+logger = logging.getLogger(__name__)
 
 CURRENT_VERSION = 1  # L1 JSON format version
 
@@ -76,6 +79,10 @@ class Stage:
     line_ids: list[str] = field(default_factory=list)
     default_background: str = ""
     order: int = 0  # sorting index
+
+    def __post_init__(self):
+        if not self.line_ids:
+            logger.warning(f"Stage '{self.title}' created with empty line_ids")
 
 
 @dataclass

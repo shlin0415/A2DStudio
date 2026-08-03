@@ -1,4 +1,5 @@
 """测试 SessionRuntime — epoch 编辑 + scene config + Stage + 序列化"""
+import logging
 import time
 import pytest
 from ling_chat.core.session_runtime import SessionRuntime
@@ -259,6 +260,34 @@ class TestEditCleanup:
         valid_ids = {l.id for l in sr.script_lines}
         for lid in stage.line_ids:
             assert lid in valid_ids, f"Stage has dangling ref {lid}"
+
+
+class TestDeleteStage:
+    """AC-1.1 Negative: deleting stage must clear associated ScriptLine.stage_id."""
+    def test_delete_stage_clears_line_stage_id(self):
+        sr = make_sr()
+        stage = Stage(title="test")
+        sr.stages.append(stage)
+        line = ScriptLine(speaker="ema", display_text="hello", stage_id=stage.id)
+        sr.add_line(line)
+        stage.line_ids.append(line.id)
+        assert line.stage_id == stage.id
+        sr.delete_stage(stage.id)
+        assert len(sr.stages) == 0
+        assert line.stage_id == ""  # cleared
+
+
+class TestStageEmptyLineIdsWarning:
+    """AC-1 Negative: empty line_ids Stage creation should warn."""
+    def test_empty_line_ids_warns(self, caplog):
+        with caplog.at_level(logging.WARNING):
+            Stage(title="empty")
+        assert "empty line_ids" in caplog.text
+
+    def test_nonempty_line_ids_no_warn(self, caplog):
+        with caplog.at_level(logging.WARNING):
+            Stage(title="ok", line_ids=["l1"])
+        assert "empty line_ids" not in caplog.text
 
 
 class TestStageAssignment:
