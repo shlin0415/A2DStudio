@@ -105,7 +105,7 @@
 import { ref, watch, computed } from 'vue'
 import { useScriptStore } from '@/stores/modules/script'
 import { useA2DWebSocket } from '@/composables/useA2DWebSocket'
-import { exportSession, importSession } from '@/composables/useA2DSaveLoad'
+import { exportSession, importSession, commitImport } from '@/composables/useA2DSaveLoad'
 
 const store = useScriptStore()
 const { sendStart, sendContinue, sendRetry, sendRegenerateTTS, logUserAction } = useA2DWebSocket()
@@ -182,6 +182,8 @@ function replayAudio() {
 }
 
 function handleStart() {
+  // Explicit user action = commit any pending import (preview-mode, DEC-1).
+  commitImport()
   store.reset()
   sendStart({ batchSize: batchSize.value })
 }
@@ -194,6 +196,8 @@ function handleContinue() {
   const edits = hasEdits
     ? [{ id: line.id, text: editingText.value }]
     : []
+  // Explicit user action = commit any pending import (preview-mode, DEC-1).
+  commitImport()
   logUserAction('continue', `ReviewPanel line[${line.index}]`,
     hasEdits ? `edited (${editingText.value.length - originalText.length}Δ)` : 'no edits')
   // Persist current edit before sending

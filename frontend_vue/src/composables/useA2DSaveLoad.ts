@@ -8,6 +8,15 @@ export const SNAPSHOT_VERSION = 1
 /** Phases during which import is permitted (backend is not actively pushing). */
 const IMPORTABLE_PHASES = new Set(['idle', 'paused'])
 
+/** sessionStorage key holding the pre-import rollback snapshot (preview-mode, DEC-1). */
+const ROLLBACK_KEY = 'a2d_import_rollback'
+
+interface RollbackData {
+  script: ScriptSnapshot
+  game: GameSnapshot
+  ts: number
+}
+
 export interface ExportEnvelope {
   version: number
   exportedAt: string
@@ -105,13 +114,80 @@ export function validateEnvelope(raw: unknown): ImportResult {
 }
 
 /**
+ * Capture the current store state into sessionStorage as the rollback point.
+ * Call BEFORE reset(). On refresh, `initImportRollback()` restores this state,
+ * cancelling the import (preview-mode semantics per DEC-1).
+ */
+export function captureRollback(): void {
+  const script = useScriptStore()
+  const game = useGameStore()
+  const data: RollbackData = {
+    script: {
+      version: SNAPSHOT_VERSION,
+      exportedAt: new Date().toISOString(),
+      lines: script.lines,
+      phase: script.phase,
+      selectedLineId: script.selectedLineId,
+      playingLineId: script.playingLineId,
+      editedText: script.editedText,
+      activeTab: script.activeTab,
+    },
+    game: {
+      gameRoles: game.gameRoles,
+      presentRoleIds: game.presentRoleIds,
+    },
+    ts: Date.now(),
+  }
+  try {
+    sessionStorage.setItem(ROLLBACK_KEY, JSON.stringify(data))
+  } catch {
+    // sessionStorage full or blocked — import proceeds without rollback safety.
+  }
+}
+
+/**
+ * Restore the pre-import state from sessionStorage. Returns true if a rollback
+ * was applied. Safe to call on every app boot: no-op when key is absent or corrupt.
+ */
+export function rollbackImport(): boolean {
+  const raw = sessionStorage.getItem(ROLLBACK_KEY)
+  if (!raw) return false
+  sessionStorage.removeItem(ROLLBACK_KEY)
+  let data: RollbackData
+  try {
+    data = JSON.parse(raw) as RollbackData
+  } catch {
+    return false
+  }
+  const script = useScriptStore()
+  script.reset()
+  script.importFromSnapshot(data.script)
+  useGameStore().importFromSnapshot(data.game)
+  return true
+}
+
+/** Commit the current import: clear the rollback key so refresh keeps imported state. */
+export function commitImport(): void {
+  sessionStorage.removeItem(ROLLBACK_KEY)
+}
+
+/**
+ * Boot hook — call once at app startup (before WS traffic). Restores pre-import
+ * state if the user imported then refreshed without explicitly continuing.
+ */
+export function initImportRollback(): void {
+  rollbackImport()
+}
+
+/**
  * Read + validate a File, then import it into the stores.
  *
  * Semantics (DEC-1 = preview mode):
- *  - Full overwrite: reset() first, then fill from snapshot.
+ *  - Capture rollback point, then full overwrite (reset → fill from snapshot).
  *  - Phase-gated: only allowed in idle/paused phases.
- *  - On success, phase is forced to `paused` so the user must explicitly continue.
- *  - On failure, stores are left untouched.
+ *  - On success, phase is forced to `paused` (inside importFromSnapshot) so the
+ *    user must explicitly continue.
+ *  - On failure, stores are left untouched (and rollback key is not written).
  */
 export async function importSession(file: File): Promise<ImportResult> {
   const script = useScriptStore()
@@ -139,18 +215,18 @@ export async function importSession(file: File): Promise<ImportResult> {
 
   const env = raw as unknown as ExportEnvelope
 
+  // --- Preview mode: capture rollback point BEFORE wiping ---
+  captureRollback()
+
   // --- Full overwrite: wipe script store, then fill both stores from snapshot ---
   script.reset()
-  // importFromSnapshot forces phase=poused internally; pass through.
+  // importFromSnapshot forces phase=paused internally; that is the contract.
   script.importFromSnapshot(env.script)
   // game store import handles mainRoleId reset + presentRoleIds cross-check internally.
   useGameStore().importFromSnapshot({
     gameRoles: env.game?.gameRoles ?? {},
     presentRoleIds: env.game?.presentRoleIds ?? [],
   })
-
-  // Force paused: user must explicitly continue (preview-mode semantics).
-  script.setPhase('paused')
 
   return { ok: true }
 }

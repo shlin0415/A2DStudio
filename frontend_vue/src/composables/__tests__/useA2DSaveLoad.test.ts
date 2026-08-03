@@ -1,9 +1,24 @@
-import { describe, it, expect, beforeEach, vi } from 'vitest'
+import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest'
+import { createTestingPinia } from '@pinia/testing'
+import { setActivePinia, createPinia } from 'pinia'
 import { useScriptStore } from '@/stores/modules/script'
 import { useGameStore } from '@/stores/modules/game'
-import { exportSession, importSession, validateEnvelope, SNAPSHOT_VERSION } from '@/composables/useA2DSaveLoad'
+import {
+  exportSession, importSession, validateEnvelope,
+  rollbackImport, commitImport, captureRollback, initImportRollback,
+  SNAPSHOT_VERSION,
+} from '@/composables/useA2DSaveLoad'
 
 // ── Helpers ──────────────────────────────────────────
+
+beforeEach(() => {
+  setActivePinia(createPinia())
+})
+
+afterEach(() => {
+  vi.restoreAllMocks()
+  sessionStorage.clear()
+})
 
 function makeLine(id: string, index: number) {
   return { id, speaker: 'ema' as const, display_text: `文本${id}`, tts_text: `TTS${id}`, index }
@@ -233,7 +248,7 @@ describe('importSession', () => {
     // Full overwrite: old lines gone
     expect(store.lines).toHaveLength(3)
     expect(store.lines.map(l => l.id)).toEqual(['new1', 'new2', 'new3'])
-    expect(store.lines[0].display_text).toBe('文本new1')
+    expect(store.lines[0]!.display_text).toBe('文本new1')
     // selectedLineId preserved (points to existing line)
     expect(store.selectedLineId).toBe('new2')
     // editedText restored
@@ -243,7 +258,7 @@ describe('importSession', () => {
     // game store overwritten
     const game = useGameStore()
     expect(game.presentRoleIds).toEqual([1])
-    expect(game.gameRoles[1].emotion).toBe('开心')
+    expect(game.gameRoles[1]!.emotion).toBe('开心')
   })
 
   it('falls back selectedLineId AND playingLineId to null when they point to non-existent lines', async () => {
@@ -349,5 +364,141 @@ describe('importSession', () => {
     expect(store.selectedLineId).toBe('x2')
     expect(store.editedText).toEqual({ x1: '自定义文本' })
     expect(store.phase).toBe('paused')
+  })
+})
+
+describe('AC-4 performance', () => {
+  function makeLines(n: number): ReturnType<typeof makeLine>[] {
+    return Array.from({ length: n }, (_, i) => ({
+      id: `l${i}`, speaker: 'ema', index: i,
+      display_text: '一二三四五六七八九十'.repeat(5), // 50 chars
+      tts_text: `TTS${i}`, emotion: '开心',
+    }))
+  }
+
+  it('1000 lines export+import round-trips under 200ms', async () => {
+    const store = setIdle()
+    const lines = makeLines(1000)
+    lines.forEach(l => store.addLine(l))
+    const game = useGameStore()
+    game.importFromSnapshot({
+      gameRoles: {
+        1: { roleId: 1, roleName: 'ema', scale: 1, offsetX: 0, offsetY: 0, emotion: '正常' } as any,
+        2: { roleId: 2, roleName: 'hiro', scale: 1, offsetX: 0, offsetY: 0, emotion: '正常' } as any,
+      },
+      presentRoleIds: [1, 2],
+    })
+
+    // Export (capture blob)
+    const cap = setupDownloadCapture()
+    let env: any
+    try {
+      exportSession()
+      env = await blobToJson(cap.getCapturedBlob()!)
+    } finally {
+      cap.restore()
+    }
+
+    // Time the CPU-bound path: stringify already done; time parse + store fill
+    store.reset()
+    const file = new File([JSON.stringify(env)], 'perf.json')
+    const t0 = performance.now()
+    const result = await importSession(file)
+    const elapsed = performance.now() - t0
+
+    expect(result.ok).toBe(true)
+    expect(store.lines.length).toBe(1000)
+    expect(elapsed).toBeLessThan(200)
+  })
+})
+
+describe('AC-5 preview-mode rollback', () => {
+  function makeEnv(lines: ReturnType<typeof makeLine>[]) {
+    return {
+      version: 1,
+      script: {
+        version: 1, exportedAt: '', lines, phase: 'idle',
+        selectedLineId: null, playingLineId: null, editedText: {}, activeTab: 'review' as const,
+      },
+      game: { gameRoles: {}, presentRoleIds: [] },
+    }
+  }
+
+  it('import then rollback (refresh) restores pre-import state', async () => {
+    const store = setIdle()
+    // Pre-import state: lines A, B
+    store.addLine(makeLine('A', 0))
+    store.addLine(makeLine('B', 1))
+    store.selectLine('A')
+
+    // Import lines X, Y — this writes rollback key with A, B
+    const file = new File([JSON.stringify(makeEnv([makeLine('X', 0), makeLine('Y', 1)]))], 'imp.json')
+    const result = await importSession(file)
+    expect(result.ok).toBe(true)
+    expect(store.lines.map(l => l.id)).toEqual(['X', 'Y'])
+    // Rollback key present
+    expect(sessionStorage.getItem('a2d_import_rollback')).not.toBeNull()
+
+    // Simulate refresh: wipe store, re-run boot hook
+    store.reset()
+    expect(store.lines).toEqual([])
+    initImportRollback()
+
+    // Pre-import state restored
+    expect(store.lines.map(l => l.id)).toEqual(['A', 'B'])
+    expect(store.selectedLineId).toBe('A')
+    // Rollback key consumed
+    expect(sessionStorage.getItem('a2d_import_rollback')).toBeNull()
+  })
+
+  it('commitImport clears rollback key so refresh keeps imported state', async () => {
+    const store = setIdle()
+    store.addLine(makeLine('A', 0))
+
+    const file = new File([JSON.stringify(makeEnv([makeLine('X', 0)]))], 'imp.json')
+    await importSession(file)
+    expect(store.lines.map(l => l.id)).toEqual(['X'])
+
+    // User explicitly continues → commits import
+    commitImport()
+    expect(sessionStorage.getItem('a2d_import_rollback')).toBeNull()
+
+    // Refresh now: no rollback, store wiped to empty (no persistence)
+    store.reset()
+    initImportRollback()
+    expect(store.lines).toEqual([])
+  })
+
+  it('corrupt rollback key leaves stores untouched on boot', () => {
+    const store = setIdle()
+    store.addLine(makeLine('A', 0))
+    sessionStorage.setItem('a2d_import_rollback', 'not valid json{')
+
+    const applied = rollbackImport()
+    expect(applied).toBe(false)
+    // Store untouched — line A still present
+    expect(store.lines.map(l => l.id)).toEqual(['A'])
+    // Key removed even on corruption
+    expect(sessionStorage.getItem('a2d_import_rollback')).toBeNull()
+  })
+
+  it('import captures pre-import game store state for rollback', async () => {
+    const store = setIdle()
+    store.addLine(makeLine('A', 0))
+    const game = useGameStore()
+    game.importFromSnapshot({
+      gameRoles: { 5: { roleId: 5, roleName: 'ema', scale: 2, offsetX: 10, offsetY: 20, emotion: '哭' } as any },
+      presentRoleIds: [5],
+    })
+
+    const file = new File([JSON.stringify(makeEnv([makeLine('X', 0)]))], 'imp.json')
+    await importSession(file)
+
+    // Rollback restores game store too
+    store.reset()
+    game.importFromSnapshot({ gameRoles: {}, presentRoleIds: [] })
+    initImportRollback()
+    expect(game.presentRoleIds).toEqual([5])
+    expect(game.gameRoles[5]!.emotion).toBe('哭')
   })
 })

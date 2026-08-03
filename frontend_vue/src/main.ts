@@ -1,5 +1,6 @@
 import { createApp } from 'vue'
 import pinia from './stores'
+import { initImportRollback } from './composables/useA2DSaveLoad'
 import { connectWebSocket } from './api/websocket'
 import { initializeEventProcessors } from './core/events'
 import { getWebSocketUrl } from './config/backend'
@@ -51,6 +52,10 @@ connectWebSocket(wsUrl)
 initializeEventProcessors()
 
 app.use(pinia)
+
+// Preview-mode rollback: if the user imported then refreshed without continuing,
+// restore the pre-import state (cancels the import). Runs before WS traffic.
+initImportRollback()
 
 // 性能检测并应用设置（必须在 pinia 初始化后执行）
 async function initPerformanceSettings() {
