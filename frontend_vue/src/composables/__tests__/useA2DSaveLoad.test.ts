@@ -1,7 +1,6 @@
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest'
-import { createTestingPinia } from '@pinia/testing'
 import { setActivePinia, createPinia } from 'pinia'
-import { useScriptStore } from '@/stores/modules/script'
+import { useScriptStore, type ScriptLine } from '@/stores/modules/script'
 import { useGameStore } from '@/stores/modules/game'
 import {
   exportSession, importSession, validateEnvelope,
@@ -53,14 +52,14 @@ function buildSnapshot(store: ReturnType<typeof useScriptStore>, game: ReturnTyp
 }
 
 /** Construct a complete GameRole with realistic defaults (no `as any`). */
-function makeFullRole(roleId: number, name: string) {
+function makeFullRole(roleId: number, name: string, emotion: string = '正常') {
   return {
     roleId,
     roleName: name,
     roleSubTitle: `${name}_sub`,
     thinkMessage: '',
-    emotion: '正常',
-    originalEmotion: '正常',
+    emotion,
+    originalEmotion: emotion,
     scale: 1,
     offsetX: 0,
     offsetY: 0,
@@ -285,7 +284,7 @@ describe('importSession', () => {
         activeTab: 'review' as const,
       },
       game: {
-        gameRoles: { 1: { roleId: 1, roleName: 'ema', scale: 1, offsetX: 0, offsetY: 0, emotion: '开心' } } as any,
+        gameRoles: { 1: makeFullRole(1, 'ema', '开心') },
         presentRoleIds: [1],
       },
     }
@@ -343,7 +342,7 @@ describe('importSession', () => {
         selectedLineId: null, playingLineId: null, editedText: {}, activeTab: 'review' as const,
       },
       game: {
-        gameRoles: { 10: { roleId: 10, roleName: 'ema', scale: 1, offsetX: 0, offsetY: 0, emotion: '正常' } } as any,
+        gameRoles: { 10: makeFullRole(10, 'ema') },
         presentRoleIds: [10, 999], // 999 does not exist — must be filtered out
       },
     }
@@ -416,7 +415,7 @@ describe('importSession', () => {
 })
 
 describe('AC-4 performance', () => {
-  function makeLines(n: number): ReturnType<typeof makeLine>[] {
+  function makeLines(n: number): ScriptLine[] {
     return Array.from({ length: n }, (_, i) => ({
       id: `l${i}`, speaker: 'ema', index: i,
       display_text: '一二三四五六七八九十'.repeat(5), // 50 chars
@@ -526,7 +525,7 @@ describe('AC-5 preview-mode rollback', () => {
     store.addLine(makeLine('A', 0))
     const game = useGameStore()
     game.importFromSnapshot({
-      gameRoles: { 5: { roleId: 5, roleName: 'ema', scale: 2, offsetX: 10, offsetY: 20, emotion: '哭' } as any },
+      gameRoles: { 5: makeFullRole(5, 'ema', '哭') },
       presentRoleIds: [5],
     })
 
