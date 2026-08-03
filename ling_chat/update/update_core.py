@@ -927,6 +927,8 @@ class MyUpdateStrategy(UpdateStrategy):
     def _download_single_update(self, update_info, progress_callback=None):
         try:
             download_url = update_info.get("download_url")
+            if not download_url:
+                raise UpdateError("更新信息缺少 download_url")
             if (
                 urlparse(download_url).hostname != "modelscope.cn"
                 and urlparse(download_url).hostname != "www.modelscope.cn"
@@ -934,8 +936,6 @@ class MyUpdateStrategy(UpdateStrategy):
                 raise UpdateError(
                     f"下载地址鉴定失败，非 modelscope.cn 域名被拒绝: {download_url}"
                 )
-            if not download_url:
-                raise UpdateError("更新信息缺少 download_url")
 
             temp_dir = tempfile.gettempdir()
             fname = f"update_{update_info.get('version')}.zip"

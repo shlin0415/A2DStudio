@@ -78,10 +78,14 @@ async def get_best_audio(
             logger.warning(f"Tier 2 cache lookup failed (non-fatal): {e}")
 
     # ── Tier 3: 实时生成 ──
-    logger.debug("Tier 3: generating via GSV...")
-    path = await cache_manager.get_or_generate(
-        character, tts_text,
-        generate_fn=lambda t: gsv_adapter.generate_voice(t),
-        params=params,
-    )
-    return AudioResult(audio_path=path, source="generated")
+    if cache_manager is not None:
+        logger.debug("Tier 3: generating via GSV...")
+        path = await cache_manager.get_or_generate(
+            character, tts_text,
+            generate_fn=lambda t: gsv_adapter.generate_voice(t),
+            params=params,
+        )
+        return AudioResult(audio_path=path, source="generated")
+    # No cache_manager and no cache/index — cannot generate
+    logger.error("Tier 3: cache_manager is None, cannot generate audio")
+    return AudioResult(audio_path="", source="error")
