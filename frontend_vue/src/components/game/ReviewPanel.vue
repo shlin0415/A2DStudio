@@ -80,6 +80,24 @@
         开始对话
       </button>
     </div>
+
+    <!-- Export / Import — always visible when idle or paused -->
+    <div v-if="store.isIdle || store.isPaused" class="status-row export-import-row">
+      <button class="btn-secondary btn-small" @click="handleExport" title="导出当前剧本到 .a2d.json">
+        &#x1F4E5; 导出
+      </button>
+      <button class="btn-secondary btn-small" @click="triggerImport" title="从 .a2d.json 导入剧本" :disabled="!canImport">
+        &#x1F4C4; 导入
+      </button>
+      <input
+        ref="importInput"
+        type="file"
+        accept=".a2d.json,application/json"
+        style="display: none"
+        @change="handleImportChange"
+      />
+      <span v-if="importMessage" class="import-message" :class="{ error: importError }">{{ importMessage }}</span>
+    </div>
   </div>
 </template>
 
@@ -87,11 +105,19 @@
 import { ref, watch, computed } from 'vue'
 import { useScriptStore } from '@/stores/modules/script'
 import { useA2DWebSocket } from '@/composables/useA2DWebSocket'
+import { exportSession, importSession } from '@/composables/useA2DSaveLoad'
 
 const store = useScriptStore()
 const { sendStart, sendContinue, sendRetry, sendRegenerateTTS, logUserAction } = useA2DWebSocket()
 
 const batchSize = ref(1)
+const importInput = ref<HTMLInputElement | null>(null)
+const importMessage = ref('')
+const importError = ref(false)
+
+// Import is gated to idle/paused phases (matches useA2DSaveLoad internal guard,
+// but we also disable the button so the user never triggers a rejected import).
+const canImport = computed(() => store.isIdle || store.isPaused)
 
 const editingText = ref('')
 let lastLineId = ''
@@ -193,9 +219,60 @@ function retry() {
 function skipTTS() {
   store.setPhase('paused')
 }
+
+// ── Export / Import ──────────────────────────────
+
+function handleExport() {
+  exportSession()
+  logUserAction('export', 'ReviewPanel', `${store.lines.length} lines`)
+}
+
+function triggerImport() {
+  // Guard: only idle/paused. The button is also disabled, but double-check.
+  if (!canImport.value) {
+    importMessage.value = '请先暂停当前生成再导入'
+    importError.value = true
+    return
+  }
+  importMessage.value = ''
+  importError.value = false
+  importInput.value?.click()
+}
+
+async function handleImportChange(event: Event) {
+  const input = event.target as HTMLInputElement
+  const file = input.files?.[0]
+  if (!file) return
+  importMessage.value = ''
+  importError.value = false
+  const result = await importSession(file)
+  if (result.ok) {
+    importMessage.value = `导入成功（${store.lines.length} 行）`
+    importError.value = false
+    logUserAction('import', 'ReviewPanel', `${store.lines.length} lines`)
+  } else {
+    importMessage.value = result.error || '导入失败'
+    importError.value = true
+  }
+  // Reset input so re-importing the same file triggers @change
+  input.value = ''
+}
 </script>
 
 <style scoped>
+.export-import-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-top: 8px;
+}
+.import-message {
+  font-size: 12px;
+  color: #2e7d32;
+}
+.import-message.error {
+  color: #c62828;
+}
 .review-panel {
   background: rgba(20, 20, 30, 0.95);
   padding: 16px 24px;

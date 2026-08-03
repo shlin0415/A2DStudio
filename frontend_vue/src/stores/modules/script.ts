@@ -27,6 +27,18 @@ export interface ErrorInfo {
 
 export type Phase = 'idle' | 'thinking' | 'translating' | 'synthesizing' | 'paused' | 'error'
 
+/** Shape of the JSON snapshot produced by exportSession / consumed by importFromSnapshot. */
+export interface ScriptSnapshot {
+  version: number
+  exportedAt: string
+  lines: ScriptLine[]
+  phase: Phase
+  selectedLineId: string | null
+  playingLineId: string | null
+  editedText: Record<string, string>
+  activeTab: 'review' | 'event'
+}
+
 // ── Store ──────────────────────────────────────────
 
 export const useScriptStore = defineStore('script', () => {
@@ -128,6 +140,31 @@ export const useScriptStore = defineStore('script', () => {
     selectedLineId.value = null
   }
 
+  // ── Import / Export snapshot ──────────────────────
+
+  /**
+   * Replace the entire store state from a validated snapshot.
+   * PRE-CONDITION: caller must have called reset() first (full overwrite, not merge).
+   * selectedLineId is silently dropped if it no longer exists in the imported lines.
+   */
+  function importFromSnapshot(snap: ScriptSnapshot) {
+    lines.value = snap.lines
+    editedText.value = snap.editedText || {}
+    activeTab.value = snap.activeTab || 'review'
+    // Both IDs must reference an existing line or be null — otherwise UI indicators dangle.
+    const lineIds = new Set(snap.lines.map(l => l.id))
+    selectedLineId.value = snap.selectedLineId && lineIds.has(snap.selectedLineId)
+      ? snap.selectedLineId
+      : null
+    playingLineId.value = snap.playingLineId && lineIds.has(snap.playingLineId)
+      ? snap.playingLineId
+      : null
+    const lastLine = snap.lines.length > 0 ? snap.lines[snap.lines.length - 1] : null
+    currentLine.value = lastLine && lineIds.has(lastLine.id) ? lastLine : null
+    // Contract: after import, always pause — caller (useA2DSaveLoad) relies on this.
+    phase.value = 'paused'
+  }
+
   const selectedLine = computed(() => {
     if (!selectedLineId.value) return null
     return lines.value.find(l => l.id === selectedLineId.value) || null
@@ -145,6 +182,6 @@ export const useScriptStore = defineStore('script', () => {
     batchIndex, batchTotal, playingLineId, isAudioPlaying, playingLine,
     isThinking, isTranslating, isSynthesizing, isPaused, hasError, isIdle, isBusy,
     addLine, setPhase, setError, clearError, reset,
-    selectLine, setEdited, clearEdited, commitEdits,
+    selectLine, setEdited, clearEdited, commitEdits, importFromSnapshot,
   }
 })

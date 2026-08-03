@@ -157,4 +157,28 @@ export const actions = {
   clearCurrentScene(this: GameState) {
     this.currentScene = null
   },
+
+  // ── Import snapshot ─────────────────────────────
+  /**
+   * Replace gameRoles + presentRoleIds from a validated snapshot (full overwrite).
+   *
+   * Post-condition safety: mainRoleId always points to a real role (presentRoleIds[0]),
+   * and presentRoleIds is filtered to only roles that actually exist in gameRoles —
+   * otherwise UI getters that read `gameRoles[id]` directly would see `undefined`.
+   */
+  importFromSnapshot(this: GameState, snap: { gameRoles: Record<number, GameRole>; presentRoleIds: number[] }) {
+    const roles = snap.gameRoles || {}
+    this.gameRoles = roles
+    const validIds = new Set(Object.keys(roles).map(Number))
+    this.presentRoleIds = (snap.presentRoleIds || []).filter(id => validIds.has(id))
+    // mainRoleId must reference a real role or be -1 (none). presentRoleIds[0] is the natural main.
+    const primary = this.presentRoleIds[0]
+    this.mainRoleId = primary !== undefined ? primary : -1
+    this.currentInteractRoleId = null
+    // Runtime-only fields not part of the snapshot — clear so they don't stale.
+    this.runningScript = null
+    this.dialogHistory = []
+    this.currentScene = null
+    this.currentStatus = 'input'
+  },
 }

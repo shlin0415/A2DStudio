@@ -65,6 +65,12 @@ export interface GameState {
   command: string | null
 }
 
+/** Shape of the game-store portion of an export snapshot. */
+export interface GameSnapshot {
+  gameRoles: Record<number, GameRole>
+  presentRoleIds: number[]
+}
+
 export const state: GameState = {
   runningScript: null,
 
