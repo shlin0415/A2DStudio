@@ -5,14 +5,21 @@ from typing import Literal, Optional
 
 
 @dataclass
-class TextOverlayBox:
+class TextOverlay:
+    """Screen-oriented text overlay with percentage coordinates (0-100).
+
+    Percentage coords auto-adapt to any canvas resolution at render time
+    (pixel_x = x% * canvas_width / 100).
+    """
     id: str = field(default_factory=lambda: str(uuid.uuid4()))
-    content: str = ""
-    content_type: Literal["text", "code", "formula"] = "text"
-    position: dict = field(default_factory=lambda: {"x": 50, "y": 30})
-    style: dict = field(default_factory=lambda: {"font_size": 14, "color": "#ffffff"})
-    start_line_id: str = ""
-    end_line_id: str = ""
+    text: str = ""
+    x: float = 50.0  # percentage 0-100, relative to canvas
+    y: float = 30.0
+    width: float = 0  # 0 = auto
+    font_size: int = 24
+    color: str = "#ffffff"
+    opacity: float = 1.0
+    z: int = 0  # z-index for layering
 
 
 @dataclass
@@ -23,7 +30,12 @@ class LineOverlay:
     gsv_params: Optional[dict] = None
     sprite_positions: Optional[dict] = None
     background: Optional[str] = None
-    text_overlays: list[TextOverlayBox] = field(default_factory=list)
+    text_overlays: list[TextOverlay] = field(default_factory=list)
+    image_overlays: list[dict] = field(default_factory=list)
+    # Each image_overlay: {id, path, x, y, w, h, opacity, z}
+    bgm: str = ""
+    bgm_volume: float = 1.0
+    bgm_loop: bool = True
 
 
 @dataclass
@@ -31,6 +43,7 @@ class ScriptLine:
     id: str = field(default_factory=lambda: str(uuid.uuid4()))
     index: int = 0
     generation_epoch: int = 0
+    stage_id: str = ""  # NEW: associated Stage identifier
 
     speaker: Literal["ema", "hiro", "narrator"] = "ema"
     emotion: str = ""
@@ -47,6 +60,16 @@ class ScriptLine:
     original_audio_path: Optional[str] = None
     overlay: Optional[LineOverlay] = None
     parent_line_id: Optional[str] = None
+
+
+@dataclass
+class Stage:
+    """Stage container — groups ScriptLines into narrative phases."""
+    id: str = field(default_factory=lambda: str(uuid.uuid4()))
+    title: str = ""
+    line_ids: list[str] = field(default_factory=list)
+    default_background: str = ""
+    order: int = 0  # sorting index
 
 
 @dataclass
