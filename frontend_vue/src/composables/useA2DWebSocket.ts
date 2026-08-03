@@ -222,6 +222,15 @@ export function useA2DWebSocket() {
           break
         }
         case 'script_line': {
+          // Guard: ignore stale lines that arrive while paused — the exact state
+          // a preview-mode import forces. Without this, a delayed script_line could
+          // silently append to the imported state. During normal generation phase
+          // is thinking/translating/synthesizing (never paused), so this can't drop
+          // a legitimate line.
+          if (store.phase === 'paused') {
+            emitTrace('ws_script_line_ignored', { lineId: (msg.payload as any)?.id, reason: 'paused' })
+            break
+          }
           // tts_text: ground-truth for ASR eval (trace_hook capture mode)
           emitTrace('ws_script_line', { lineId: (msg.payload as any)?.id, tts_text: (msg.payload as any)?.tts_text })
           store.addLine(msg.payload as ScriptLine)

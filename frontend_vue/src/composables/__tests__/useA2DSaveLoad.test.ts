@@ -264,6 +264,17 @@ describe('importSession', () => {
     expect(result.error).toContain('lines')
   })
 
+  it('rejects empty file (Q15)', async () => {
+    const store = useScriptStore()
+    store.setPhase('idle')
+    const file = new File([''], 'empty.json')
+    const result = await importSession(file)
+    expect(result.ok).toBe(false)
+    expect(result.error).toContain('解析')
+    // Store untouched
+    expect(store.lines).toEqual([])
+  })
+
   it('imports valid snapshot with full overwrite + forces paused', async () => {
     const store = useScriptStore()
     // Pre-existing state that must be wiped
