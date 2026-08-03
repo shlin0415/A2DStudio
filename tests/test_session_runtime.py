@@ -1,4 +1,5 @@
 """测试 SessionRuntime — epoch 编辑 + scene config + Stage + 序列化"""
+import time
 import pytest
 from ling_chat.core.session_runtime import SessionRuntime
 from ling_chat.schemas.script_overlay import ScriptLine, Stage, LineOverlay, TextOverlay
@@ -189,10 +190,107 @@ class TestSerialization:
         assert sr.script_lines[0].stage_id == sr.stages[0].id
 
     def test_invalid_version_raises(self):
-        """Future version should not crash, just load what it can."""
+        """AC-3 Negative: unsupported version should raise ValueError."""
         data = {"version": 99, "script_lines": []}
-        sr = SessionRuntime.from_dict(data)
-        assert sr.script_lines == []
+        with pytest.raises(ValueError, match="Unsupported session format version"):
+            SessionRuntime.from_dict(data)
+
+    def test_roundtrip_preserves_all_fields(self):
+        """AC-3: roundtrip must preserve original_audio_path + overlay fields."""
+        sr = make_sr()
+        stage = Stage(title="test")
+        sr.stages.append(stage)
+        line = ScriptLine(
+            speaker="ema",
+            display_text="hello",
+            stage_id=stage.id,
+            audio_path="audio/a.wav",
+            original_audio_path="audio/orig.wav",
+            overlay=LineOverlay(
+                character_id=1,
+                ref_audio_path="ref.wav",
+                gsv_params={"speed": 1.0},
+                sprite_positions={"ema": {"x": 0, "y": 0}},
+            ),
+        )
+        sr.add_line(line)
+        stage.line_ids.append(line.id)
+        sr2 = SessionRuntime.from_dict(sr.to_dict())
+        assert sr2.script_lines[0].original_audio_path == "audio/orig.wav"
+        assert sr2.script_lines[0].overlay.character_id == 1
+        assert sr2.script_lines[0].overlay.ref_audio_path == "ref.wav"
+        assert sr2.script_lines[0].overlay.gsv_params == {"speed": 1.0}
+        assert sr2.script_lines[0].overlay.sprite_positions == {"ema": {"x": 0, "y": 0}}
+
+    def test_performance_1000_lines(self):
+        """AC-3: 1000 lines + 10 stages serialization < 100ms, deserialization < 200ms."""
+        sr = make_sr()
+        for s_idx in range(10):
+            sr.stages.append(Stage(title=f"stage_{s_idx}", order=s_idx))
+        for i in range(1000):
+            line = ScriptLine(speaker="ema", display_text=f"line_{i}", stage_id=sr.stages[i % 10].id)
+            sr.add_line(line)
+            sr.stages[i % 10].line_ids.append(line.id)
+        start = time.time()
+        data = sr.to_dict()
+        serialize_ms = (time.time() - start) * 1000
+        start = time.time()
+        SessionRuntime.from_dict(data)
+        deserialize_ms = (time.time() - start) * 1000
+        assert serialize_ms < 100, f"Serialization took {serialize_ms:.1f}ms"
+        assert deserialize_ms < 200, f"Deserialization took {deserialize_ms:.1f}ms"
+
+
+class TestEditCleanup:
+    """AC-1.1: _apply_edits() must clean up dangling stage.line_ids."""
+    def test_apply_edits_cleans_stage_line_ids(self):
+        sr = make_sr()
+        stage = Stage(title="test")
+        sr.stages.append(stage)
+        for i in range(5):
+            line = ScriptLine(speaker="ema", display_text=f"line_{i}", stage_id=stage.id)
+            sr.add_line(line)
+            stage.line_ids.append(line.id)
+        assert len(stage.line_ids) == 5
+        # Edit first existing line → truncates to index 0 + 1 edited = 1 line, stage cleaned
+        sr._apply_edits([{"id": sr.script_lines[0].id, "text": "edited"}])
+        assert len(sr.script_lines) == 1
+        # Stage.line_ids should only contain IDs still in script_lines
+        valid_ids = {l.id for l in sr.script_lines}
+        for lid in stage.line_ids:
+            assert lid in valid_ids, f"Stage has dangling ref {lid}"
+
+
+class TestStageAssignment:
+    def test_same_line_cannot_belong_to_multiple_stages(self):
+        """AC-1 Negative: same line assigned to multiple stages should be prevented."""
+        sr = make_sr()
+        s1 = Stage(title="s1")
+        s2 = Stage(title="s2")
+        sr.stages.extend([s1, s2])
+        line = ScriptLine(speaker="ema", display_text="hello")
+        sr.add_line(line)
+        sr.assign_line_to_stage(line.id, s1.id)
+        sr.assign_line_to_stage(line.id, s2.id)
+        assert line.stage_id == s2.id
+        assert line.id in s2.line_ids
+        assert line.id not in s1.line_ids  # removed from old stage
+
+
+class TestTextOverlayValidation:
+    def test_coords_out_of_range_raises(self):
+        """AC-2 Negative: coords outside 0-100 should raise ValueError."""
+        with pytest.raises(ValueError, match="coords must be 0-100"):
+            TextOverlay(x=150.0, y=30.0)
+        with pytest.raises(ValueError, match="coords must be 0-100"):
+            TextOverlay(x=50.0, y=-10.0)
+
+    def test_coords_valid_range(self):
+        """AC-2 Positive: coords within 0-100 should be accepted."""
+        t = TextOverlay(x=0.0, y=0.0)
+        assert t.x == 0.0
+        t2 = TextOverlay(x=100.0, y=100.0)
+        assert t2.x == 100.0
 
 
 class TestEpochAndPause:

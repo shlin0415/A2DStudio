@@ -3,6 +3,8 @@ import uuid
 from dataclasses import dataclass, field
 from typing import Literal, Optional
 
+CURRENT_VERSION = 1  # L1 JSON format version
+
 
 @dataclass
 class TextOverlay:
@@ -20,6 +22,10 @@ class TextOverlay:
     color: str = "#ffffff"
     opacity: float = 1.0
     z: int = 0  # z-index for layering
+
+    def __post_init__(self):
+        if not (0 <= self.x <= 100) or not (0 <= self.y <= 100):
+            raise ValueError(f"TextOverlay coords must be 0-100, got x={self.x}, y={self.y}")
 
 
 @dataclass

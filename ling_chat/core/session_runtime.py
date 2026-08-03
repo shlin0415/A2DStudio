@@ -5,7 +5,7 @@ from dataclasses import dataclass, field
 from typing import Any, Optional
 
 from ling_chat.core.logger import logger
-from ling_chat.schemas.script_overlay import LineOverlay, SceneConfig, ScriptLine, Stage, TextOverlay
+from ling_chat.schemas.script_overlay import CURRENT_VERSION, LineOverlay, SceneConfig, ScriptLine, Stage, TextOverlay
 
 
 @dataclass
@@ -120,6 +120,11 @@ class SessionRuntime:
         # Truncate from first modified index
         self.script_lines = self.script_lines[:first_modified_idx]
 
+        # Clean up dangling stage.line_ids references (AC-1.1)
+        valid_ids = {l.id for l in self.script_lines}
+        for stage in self.stages:
+            stage.line_ids = [lid for lid in stage.line_ids if lid in valid_ids]
+
         # Append modified lines
         for i, line_data in enumerate(modified_lines):
             line_id = line_data.get("id", "")
@@ -166,11 +171,18 @@ class SessionRuntime:
     # ── Stage management ─────────────────────────────────────────
 
     def assign_line_to_stage(self, line_id: str, stage_id: str) -> None:
-        """Associate a ScriptLine with a Stage (weak reference, no strict sync)."""
+        """Associate a ScriptLine with a Stage (weak reference, no strict sync).
+
+        AC-1 Negative: prevents same line from being assigned to multiple stages.
+        """
         stage = self.get_stage(stage_id)
         if stage is None:
             logger.warning(f"Stage {stage_id} not found for line {line_id}")
             return
+        # Remove line from any other stage first (prevent multi-stage assignment)
+        for s in self.stages:
+            if line_id in s.line_ids:
+                s.line_ids.remove(line_id)
         for line in self.script_lines:
             if line.id == line_id:
                 line.stage_id = stage_id
@@ -238,8 +250,14 @@ class SessionRuntime:
                     "raw_text": l.raw_text,
                     "state": l.state,
                     "audio_path": l.audio_path,
+                    "original_audio_path": l.original_audio_path,
                     "parent_line_id": l.parent_line_id,
                     "overlay": {
+                        "line_id": l.overlay.line_id if l.overlay else "",
+                        "character_id": l.overlay.character_id if l.overlay else 0,
+                        "ref_audio_path": l.overlay.ref_audio_path if l.overlay else None,
+                        "gsv_params": l.overlay.gsv_params if l.overlay else None,
+                        "sprite_positions": l.overlay.sprite_positions if l.overlay else None,
                         "background": l.overlay.background if l.overlay else None,
                         "text_overlays": [
                             {
@@ -268,6 +286,9 @@ class SessionRuntime:
     @classmethod
     def from_dict(cls, data: dict) -> "SessionRuntime":
         """Deserialize session from L1 JSON dict (with backward compat for v0)."""
+        version = data.get("version", 0)
+        if version > CURRENT_VERSION:
+            raise ValueError(f"Unsupported session format version: {version} (max {CURRENT_VERSION})")
         runtime = cls()
         runtime.session_id = data.get("session_id", runtime.session_id)
         runtime.generation_epoch = data.get("generation_epoch", 0)
@@ -302,6 +323,11 @@ class SessionRuntime:
         for l_data in data.get("script_lines", []):
             overlay_data = l_data.get("overlay") or {}
             overlay = LineOverlay(
+                line_id=overlay_data.get("line_id", ""),
+                character_id=overlay_data.get("character_id", 0),
+                ref_audio_path=overlay_data.get("ref_audio_path"),
+                gsv_params=overlay_data.get("gsv_params"),
+                sprite_positions=overlay_data.get("sprite_positions"),
                 background=overlay_data.get("background"),
                 text_overlays=[
                     TextOverlay(
@@ -335,6 +361,7 @@ class SessionRuntime:
                 raw_text=l_data.get("raw_text", ""),
                 state=l_data.get("state", "draft"),
                 audio_path=l_data.get("audio_path"),
+                original_audio_path=l_data.get("original_audio_path"),
                 parent_line_id=l_data.get("parent_line_id"),
                 overlay=overlay,
             )
