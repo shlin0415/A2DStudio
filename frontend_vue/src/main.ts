@@ -44,18 +44,23 @@ LEGACY_KEYS.forEach((key) => {
 
 const app = createApp(App)
 
-// 使用动态 WebSocket URL
+// Pinia must be installed before the rollback reads the stores.
+app.use(pinia)
+
+// Preview-mode rollback: restores pre-import state if the user imported then
+// refreshed without continuing (cancels the import). MUST run BEFORE
+// connectWebSocket so no incoming script_line can mutate the store first.
+// Keep this synchronous (no `await`) between app.use(pinia) and WS connect.
+initImportRollback()
+
+// WS connection opens AFTER the rollback so the store is stable. The onmessage
+// handler fires only on network macrotasks, which cannot interrupt the current
+// synchronous tick — so the rollback is guaranteed to complete first.
 const wsUrl = getWebSocketUrl()
 console.log('WebSocket 连接地址:', wsUrl)
 connectWebSocket(wsUrl)
 
 initializeEventProcessors()
-
-app.use(pinia)
-
-// Preview-mode rollback: if the user imported then refreshed without continuing,
-// restore the pre-import state (cancels the import). Runs before WS traffic.
-initImportRollback()
 
 // 性能检测并应用设置（必须在 pinia 初始化后执行）
 async function initPerformanceSettings() {

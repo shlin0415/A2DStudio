@@ -30,6 +30,50 @@ function setIdle() {
   return store
 }
 
+/** Build the same snapshot shape `exportSession` produces (without Blob/download). */
+function buildSnapshot(store: ReturnType<typeof useScriptStore>, game: ReturnType<typeof useGameStore>) {
+  return {
+    version: SNAPSHOT_VERSION,
+    exportedAt: new Date().toISOString(),
+    script: {
+      version: SNAPSHOT_VERSION,
+      exportedAt: new Date().toISOString(),
+      lines: store.lines,
+      phase: store.phase,
+      selectedLineId: store.selectedLineId,
+      playingLineId: store.playingLineId,
+      editedText: store.editedText,
+      activeTab: store.activeTab,
+    },
+    game: {
+      gameRoles: game.gameRoles,
+      presentRoleIds: game.presentRoleIds,
+    },
+  }
+}
+
+/** Construct a complete GameRole with realistic defaults (no `as any`). */
+function makeFullRole(roleId: number, name: string) {
+  return {
+    roleId,
+    roleName: name,
+    roleSubTitle: `${name}_sub`,
+    thinkMessage: '',
+    emotion: '正常',
+    originalEmotion: '正常',
+    scale: 1,
+    offsetX: 0,
+    offsetY: 0,
+    bubbleTop: 0,
+    bubbleLeft: 0,
+    show: true,
+    clothes: {},
+    clothesName: '',
+    bodyPart: {},
+    character_folder: `chars/${name}`,
+  }
+}
+
 /**
  * Capture the Blob that exportSession hands to the anchor click.
  * We stub URL.createObjectURL + anchor.click to intercept the download.
@@ -45,15 +89,19 @@ function setupDownloadCapture() {
   URL.revokeObjectURL = vi.fn()
   const clickSpy = vi.fn()
   const origCreateElement = document.createElement.bind(document)
+  // Capture the anchor so tests can assert on its `download` attribute.
+  let capturedAnchor: HTMLAnchorElement | null = null
   vi.spyOn(document, 'createElement').mockImplementation((tag: string) => {
     const el = origCreateElement(tag)
     if (tag === 'a') {
       el.click = clickSpy
+      capturedAnchor = el as HTMLAnchorElement
     }
     return el
   })
   return {
     getCapturedBlob: () => capturedBlob,
+    getAnchor: () => capturedAnchor,
     clickSpy,
     restore() {
       URL.createObjectURL = origCreate
@@ -128,10 +176,10 @@ describe('exportSession', () => {
     const cap = setupDownloadCapture()
     try {
       exportSession()
-      // The anchor's download attribute is set to the filename
-      const anchor = cap.clickSpy.mock.instances[0] as HTMLAnchorElement
-      // clickSpy replaces click; instead inspect createElement calls
-      expect(cap.clickSpy).toHaveBeenCalled()
+      // The anchor's download attribute carries the timestamped filename.
+      const anchor = cap.getAnchor()
+      expect(anchor).not.toBeNull()
+      expect(anchor!.download).toMatch(/^save-\d{8}-\d{6}\.a2d\.json$/)
     } finally {
       cap.restore()
     }
@@ -382,27 +430,18 @@ describe('AC-4 performance', () => {
     lines.forEach(l => store.addLine(l))
     const game = useGameStore()
     game.importFromSnapshot({
-      gameRoles: {
-        1: { roleId: 1, roleName: 'ema', scale: 1, offsetX: 0, offsetY: 0, emotion: '正常' } as any,
-        2: { roleId: 2, roleName: 'hiro', scale: 1, offsetX: 0, offsetY: 0, emotion: '正常' } as any,
-      },
+      gameRoles: { 1: makeFullRole(1, 'ema'), 2: makeFullRole(2, 'hiro') },
       presentRoleIds: [1, 2],
     })
 
-    // Export (capture blob)
-    const cap = setupDownloadCapture()
-    let env: any
-    try {
-      exportSession()
-      env = await blobToJson(cap.getCapturedBlob()!)
-    } finally {
-      cap.restore()
-    }
-
-    // Time the CPU-bound path: stringify already done; time parse + store fill
-    store.reset()
-    const file = new File([JSON.stringify(env)], 'perf.json')
+    // Time the full export→import CPU path: JSON.stringify (export serialization)
+    // + File construction + JSON.parse (import) + store fill. The Blob/anchor DOM
+    // side effects are excluded (they touch the mocked DOM, not the CPU budget).
     const t0 = performance.now()
+    const snapshot = buildSnapshot(store, game)
+    const json = JSON.stringify(snapshot)
+    store.reset()
+    const file = new File([json], 'perf.json')
     const result = await importSession(file)
     const elapsed = performance.now() - t0
 

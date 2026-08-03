@@ -178,6 +178,8 @@ const errorLabel = computed(() => {
 })
 
 function replayAudio() {
+  // Explicit user action = commit any pending import (preview-mode, DEC-1).
+  commitImport()
   store.setPhase('paused')
 }
 
