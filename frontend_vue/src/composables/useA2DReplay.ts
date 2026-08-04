@@ -138,6 +138,7 @@ export function useA2DReplay() {
     const prevState = state.value
     state.value = 'seeking'
     stopCurrentAudio() // B4: pause active audio before switching (prevents overlap)
+    isAudioPlaying.value = false // MG5: reset so enqueueFromIndex starts playback
     audioQueue.value.length = 0
     const line = replayLines.value[index]
     if (!line) { state.value = prevState; return }
@@ -151,6 +152,7 @@ export function useA2DReplay() {
   function stop() {
     state.value = 'idle'
     stopCurrentAudio() // B4: pause active audio
+    isAudioPlaying.value = false // MG4: reset so a subsequent start() can play
     audioQueue.value.length = 0
     currentSubtitle.value = ''
     scriptStore.playingLineId = null

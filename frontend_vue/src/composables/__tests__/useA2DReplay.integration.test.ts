@@ -17,8 +17,8 @@ describe('playNextInQueue callback threading (B1/B2 fix)', () => {
     vi.restoreAllMocks()
   })
 
-  function makeLine(id: string, index: number): ScriptLine {
-    return { id, speaker: 'ema', display_text: `文本${id}`, tts_text: `TTS${id}`, index, audio_path: `/audio/${id}.wav`, overlay: null, stage_id: '' }
+  function makeLine(id: string, index: number, extra: Partial<ScriptLine> = {}): ScriptLine {
+    return { id, speaker: 'ema', display_text: `文本${id}`, tts_text: `TTS${id}`, index, audio_path: `/audio/${id}.wav`, overlay: null, stage_id: '', ...extra }
   }
 
   it('onItemStart fires for ALL items, not just item 1 (B1 fix)', async () => {
@@ -123,6 +123,85 @@ describe('playNextInQueue callback threading (B1/B2 fix)', () => {
       // B2: natural end -> state='idle' + playingLineId cleared (stop() called).
       expect(replay.state.value).toBe('idle')
       expect(store.playingLineId).toBeNull()
+    } finally {
+      vi.restoreAllMocks()
+    }
+  })
+
+  // MG4 regression guard: stop() resets isAudioPlaying so start() can replay.
+  it('engine: stop resets isAudioPlaying so start() replays (MG4)', async () => {
+    const { isAudioPlaying } = await import('@/composables/audio-queue')
+    class FakeAudio {
+      src = ''; muted = false; currentTime = 0
+      onended: (() => void) | null = null
+      onerror: (() => void) | null = null
+      load() {}
+      play() { return Promise.resolve() }
+      pause() {}
+    }
+    // @ts-expect-error override Audio constructor
+    globalThis.Audio = FakeAudio
+    vi.spyOn(global, 'setTimeout').mockImplementation((fn: () => void) => {
+      if (typeof fn === 'function') fn()
+      return 0 as unknown as ReturnType<typeof setTimeout>
+    })
+
+    try {
+      const store = useScriptStore()
+      store.addLine(makeLine('s1', 0))
+      _resetReplaySingleton()
+      const replay = useA2DReplay()
+
+      replay.start(0)
+      expect(replay.state.value).toBe('playing')
+      expect(isAudioPlaying.value).toBe(true)
+
+      replay.stop()
+      expect(replay.state.value).toBe('idle')
+      // MG4: core of the fix — isAudioPlaying reset so next start() can play.
+      expect(isAudioPlaying.value).toBe(false)
+
+      // After reset, a fresh start() enqueues + starts playback again.
+      replay.start(0)
+      expect(isAudioPlaying.value).toBe(true)
+    } finally {
+      vi.restoreAllMocks()
+    }
+  })
+
+  // MG5 regression guard: seek() resets isAudioPlaying so playback starts.
+  it('engine: seek resets isAudioPlaying so playback starts (MG5)', async () => {
+    const { isAudioPlaying } = await import('@/composables/audio-queue')
+    class FakeAudio {
+      src = ''; muted = false; currentTime = 0
+      onended: (() => void) | null = null
+      onerror: (() => void) | null = null
+      load() {}
+      play() { return Promise.resolve() }
+      pause() {}
+    }
+    // @ts-expect-error override Audio constructor
+    globalThis.Audio = FakeAudio
+    vi.spyOn(global, 'setTimeout').mockImplementation((fn: () => void) => {
+      if (typeof fn === 'function') fn()
+      return 0 as unknown as ReturnType<typeof setTimeout>
+    })
+
+    try {
+      const store = useScriptStore()
+      store.addLine(makeLine('k1', 0))
+      store.addLine(makeLine('k2', 1))
+      store.addLine(makeLine('k3', 2))
+
+      _resetReplaySingleton()
+      const replay = useA2DReplay()
+      replay.start(0)
+      expect(isAudioPlaying.value).toBe(true)
+
+      // MG5: seek resets isAudioPlaying so the new items actually play.
+      replay.seek(2)
+      expect(store.playingLineId).toBe('k3')
+      expect(isAudioPlaying.value).toBe(true) // playback started for k3
     } finally {
       vi.restoreAllMocks()
     }
