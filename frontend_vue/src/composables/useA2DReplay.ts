@@ -1,4 +1,4 @@
-import { ref, computed, type Ref } from 'vue'
+import { ref, computed, watch, type Ref } from 'vue'
 import { useScriptStore } from '@/stores/modules/script'
 import { useGameStore } from '@/stores/modules/game'
 import { audioQueue, isAudioPlaying } from '@/composables/audio-queue'
@@ -91,7 +91,7 @@ export function useA2DReplay() {
       audioQueue.value.push({ url, lineId: line.id })
     }
     if (!isAudioPlaying.value) {
-      playNextInQueue(scriptStore, onItemStart)
+      playNextInQueue(scriptStore, onItemStart, onEnded)
     }
   }
 
@@ -101,6 +101,22 @@ export function useA2DReplay() {
     applyEmotion(line)
   }
 
+  /** On each audio end: advance the state machine. Returns false at replay end. */
+  function onEnded() {
+    advance()
+  }
+
+  // Robust per-line subtitle + emotion sync: watch playingLineId so sync works
+  // regardless of callback threading (guards against B1 regression).
+  watch(() => scriptStore.playingLineId, (id) => {
+    if (!id) return
+    const line = scriptStore.lines.find(l => l.id === id)
+    if (line) {
+      currentSubtitle.value = line.display_text
+      applyEmotion(line)
+    }
+  })
+
   function pause() {
     if (state.value !== 'playing') return
     state.value = 'paused'
@@ -109,7 +125,7 @@ export function useA2DReplay() {
   function resume() {
     if (state.value !== 'paused') return
     state.value = 'playing'
-    if (!isAudioPlaying.value) playNextInQueue(scriptStore)
+    if (!isAudioPlaying.value) playNextInQueue(scriptStore, onItemStart, onEnded)
   }
 
   function seek(index: number) {

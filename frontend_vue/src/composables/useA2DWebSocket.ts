@@ -106,6 +106,7 @@ export function setReplayActive(active: boolean) {
 async function playNextInQueue(
   store?: ReturnType<typeof import('@/stores/modules/script')['useScriptStore']>,
   onItemStart?: (line: ScriptLine) => void,
+  onEnded?: () => void,
 ) {
   if (audioQueue.value.length === 0) {
     isAudioPlaying.value = false
@@ -159,17 +160,22 @@ async function playNextInQueue(
   emitTrace('preroll_end', { lineId: item.lineId, preRollMs })
 
   // ── Real playback ──
+  // Forward onItemStart + onEnded through recursion so the replay engine drives
+  // progression (per-line subtitle/emotion sync + natural-end detection).
   audio.onended = () => {
     emitTrace('audio_end', { lineId: item.lineId })
-    playNextInQueue(store)
+    onEnded?.()
+    playNextInQueue(store, onItemStart, onEnded)
   }
   audio.onerror = () => {
     emitTrace('audio_error', { lineId: item.lineId })
-    playNextInQueue(store)
+    onEnded?.()
+    playNextInQueue(store, onItemStart, onEnded)
   }
   audio.play().catch(() => {
     emitTrace('audio_play_failed', { lineId: item.lineId })
-    playNextInQueue(store)
+    onEnded?.()
+    playNextInQueue(store, onItemStart, onEnded)
   })
 }
 
