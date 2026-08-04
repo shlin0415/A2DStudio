@@ -21,12 +21,13 @@ from fastapi.responses import FileResponse, JSONResponse
 from pydantic import BaseModel
 
 from ling_chat.core.logger import logger
-from ling_chat.utils.runtime_path import temp_path
+from ling_chat.utils.runtime_path import temp_path, user_data_path
 
 router = APIRouter()
 
-# Persistent base dir for A2D saves (NOT the ephemeral temp_path).
-SAVE_BASE_DIR = Path("data/saves")
+# Persistent base dir for A2D saves — anchored to user_data_path so exports survive
+# machine migration and are independent of backend CWD (NOT the ephemeral temp_path).
+SAVE_BASE_DIR = user_data_path / "a2d_saves"
 
 
 class A2DSaveRequest(BaseModel):
@@ -56,10 +57,12 @@ async def save_a2d_envelope(req: A2DSaveRequest):
     for line in lines:
         audio_path = line.get("audio_path") or ""
         # Only rewrite paths pointing at the temp /audio mount.
+        # On-disk format: /audio/a2d_{line_id}.wav (core.py L933/939).
         if audio_path.startswith("/audio/a2d_") and audio_path.endswith(".wav"):
-            line_id = audio_path.rsplit("/", 1)[-1].replace(".wav", "")
-            src = temp_audio / f"a2d_{line_id}.wav"
-            dst = audio_dir / f"{line_id}.wav"
+            audio_filename = audio_path.rsplit("/", 1)[-1]            # "a2d_{line_id}.wav"
+            line_id = audio_filename[4:-4]                           # strip "a2d_" + ".wav"
+            src = temp_audio / audio_filename                         # correct on-disk path
+            dst = audio_dir / audio_filename
             if src.exists():
                 try:
                     shutil.copy2(src, dst)
@@ -85,7 +88,7 @@ async def save_a2d_envelope(req: A2DSaveRequest):
 async def serve_save_audio(save_id: str, line_id: str):
     """Serve a per-save WAV file."""
     # Sanitize path components to prevent traversal.
-    if ".." in save_id or "/" in save_id or ".." in line_id or "/" in line_id:
+    if ".." in save_id or "/" in save_id or "\\" in save_id or ".." in line_id or "/" in line_id or "\\" in line_id:
         raise HTTPException(status_code=400, detail="无效的路径参数")
     audio_file = SAVE_BASE_DIR / save_id / "audio" / f"{line_id}.wav"
     if not audio_file.exists():
