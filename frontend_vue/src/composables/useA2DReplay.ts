@@ -3,26 +3,25 @@ import { useScriptStore } from '@/stores/modules/script'
 import { useGameStore } from '@/stores/modules/game'
 import { audioQueue, isAudioPlaying } from '@/composables/audio-queue'
 import { playNextInQueue, setReplayActive, pauseCurrentAudio, stopCurrentAudio, mainAudioPlay } from '@/composables/useA2DWebSocket'
-import { resolveVisual } from '@/composables/overlay-resolve'
-import type { ResolvedLineVisual } from '@/composables/types'
+import { playBGM, stopBGM } from '@/composables/useA2DBGM'
 import type { ReplayState } from '@/composables/types'
 import type { ScriptLine } from '@/stores/modules/script'
 
 // ── Singleton state (module-level, like useA2DWebSocket) ────
 let _state: Ref<ReplayState> | null = null
 let _replayLines: Ref<ScriptLine[]> | null = null
-let _visuals: Ref<ResolvedLineVisual[]> | null = null
 let _currentSubtitle: Ref<string> | null = null
 let _error: Ref<string | null> | null = null
+let _skippedLines: Ref<string[]> | null = null
 let _initialized = false
 
 function ensureInit() {
   if (_initialized) return
   _state = ref<ReplayState>('idle')
   _replayLines = ref<ScriptLine[]>([])
-  _visuals = ref<ResolvedLineVisual[]>([])
   _currentSubtitle = ref('')
   _error = ref<string | null>(null)
+  _skippedLines = ref<string[]>([])
   _initialized = true
 }
 
@@ -42,6 +41,7 @@ export function useA2DReplay() {
   const replayLines = _replayLines!
   const currentSubtitle = _currentSubtitle!
   const error = _error!
+  const skippedLines = _skippedLines!
 
   // Derived index from playingLineId (single source of truth per deliberation #8).
   const currentIndex = computed(() => {
@@ -61,11 +61,19 @@ export function useA2DReplay() {
     }
     if (startIndex < 0 || startIndex >= scriptStore.lines.length) return
 
+    // AC-7: all lines missing audio -> finite idle + error (no stuck playing state).
+    const hasAnyAudio = scriptStore.lines.some(l => l.audio_path)
+    if (!hasAnyAudio) {
+      error.value = '所有行均缺失音频'
+      return
+    }
+
     // MG-DOUBLEQUEUE: reset any in-flight playback so a restart never
     // double-queues (AC-6 negative test). Mirror stop()'s queue/audio reset.
     stopCurrentAudio()
     audioQueue.value = []
     isAudioPlaying.value = false
+    _skippedLines!.value = []
 
     state.value = 'loading'
     error.value = null
@@ -90,7 +98,11 @@ export function useA2DReplay() {
     for (let i = startIndex; i < replayLines.value.length; i++) {
       const line = replayLines.value[i]
       if (!line) break
-      if (!line.audio_path) continue // missing audio: skip (AC-7)
+      if (!line.audio_path) {
+        // AC-7: track skipped lines for UI hint.
+        if (_skippedLines) _skippedLines.value.push(line.id)
+        continue
+      }
       const url = line.audio_path.startsWith('/')
         ? `http://${window.location.hostname}:8765${line.audio_path}`
         : line.audio_path
@@ -101,11 +113,12 @@ export function useA2DReplay() {
     }
   }
 
-  /** Replay engine hook: sync subtitle + emotion + sprites when an audio item starts. */
+  /** Replay engine hook: sync subtitle + emotion + sprites + BGM when an audio item starts. */
   function onItemStart(line: ScriptLine) {
     currentSubtitle.value = line.display_text
     applyEmotion(line)
     applySpritePositions(line)
+    applyBGM(line)
   }
 
   /** On each audio end: advance the state machine. Returns false at replay end. */
@@ -113,8 +126,8 @@ export function useA2DReplay() {
     advance()
   }
 
-  // Robust per-line subtitle + emotion + sprite sync: watch playingLineId so
-  // sync works regardless of callback threading (guards against B1 regression).
+  // Robust per-line subtitle + emotion + sprite + BGM sync: watch playingLineId
+  // so sync works regardless of callback threading (guards against B1 regression).
   watch(() => scriptStore.playingLineId, (id) => {
     if (!id) return
     const line = scriptStore.lines.find(l => l.id === id)
@@ -122,6 +135,7 @@ export function useA2DReplay() {
       currentSubtitle.value = line.display_text
       applyEmotion(line)
       applySpritePositions(line)
+      applyBGM(line)
     }
   })
 
@@ -185,7 +199,20 @@ export function useA2DReplay() {
     currentSubtitle.value = line.display_text
     applyEmotion(line)
     applySpritePositions(line)
+    applyBGM(line)
     return true
+  }
+
+  /** Apply per-line BGM to the audio element (AC-4). */
+  function applyBGM(line: ScriptLine): void {
+    const bgm = line.overlay?.bgm
+    if (bgm) {
+      const vol = line.overlay?.bgm_volume
+      const loop = line.overlay?.bgm_loop ?? true
+      playBGM(bgm, { volume: vol ?? 1, loop })
+    } else {
+      stopBGM()
+    }
   }
 
   /** Apply emotion for the current line to gameRoles (AC-3). */
@@ -223,7 +250,7 @@ export function useA2DReplay() {
   }
 
   return {
-    state, currentIndex, currentSubtitle, error,
+    state, currentIndex, currentSubtitle, error, skippedLines,
     isPlaying, isPaused,
     start, pause, resume, seek, stop, advance,
   }
@@ -233,7 +260,7 @@ export function useA2DReplay() {
 export function _resetReplaySingleton() {
   if (_state) _state.value = 'idle'
   if (_replayLines) _replayLines.value = []
-  if (_visuals) _visuals.value = []
   if (_currentSubtitle) _currentSubtitle.value = ''
   if (_error) _error.value = null
+  stopBGM()
 }

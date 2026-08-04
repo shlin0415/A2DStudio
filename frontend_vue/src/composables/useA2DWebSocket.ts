@@ -1,6 +1,7 @@
 import { onMounted, onUnmounted } from 'vue'
 import { useScriptStore } from '@/stores/modules/script'
 import { useGameStore } from '@/stores/modules/game'
+import { useUIStore } from '@/stores/modules/ui/ui'
 import { emitTrace } from '@/utils/a2d-trace'
 import type { ScriptLine, ErrorInfo, Phase } from '@/stores/modules/script'
 import type { GameRole } from '@/stores/modules/game/state'
@@ -95,11 +96,14 @@ let replayActive = false
 
 export function setReplayActive(active: boolean) {
   replayActive = active
-  // On replay end, drain pending live items into the main queue.
+  // On replay end, drain pending live items into the main queue + toast (DEC-2).
   if (!active && pendingLiveQueue.value.length > 0 && !isAudioPlaying.value) {
-    drainPendingLiveQueue()
+    const items = drainPendingLiveQueue()
     const store = useScriptStore()
     playNextInQueue(store)
+    if (items.length > 0) {
+      useUIStore().showInfo({ title: '重播完成', message: `${items.length} 条新语音已排队播放` })
+    }
   }
 }
 

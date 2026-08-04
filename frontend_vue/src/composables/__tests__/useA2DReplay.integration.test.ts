@@ -106,6 +106,11 @@ describe('playNextInQueue callback threading (B1/B2 fix)', () => {
 
     try {
       const store = useScriptStore()
+      // Seed a role with a non-idle emotion so the MG2 reset is verifiable.
+      useGameStore().importFromSnapshot({
+        gameRoles: { 1: { roleId: 1, roleName: 'ema', emotion: '开心', originalEmotion: '开心', scale: 1, offsetX: 0, offsetY: 0, show: true } },
+        presentRoleIds: [1],
+      })
       store.addLine(makeLine('p1', 0, { display_text: '第一行' }))
       store.addLine(makeLine('p2', 1, { display_text: '第二行' }))
 
@@ -124,6 +129,10 @@ describe('playNextInQueue callback threading (B1/B2 fix)', () => {
       // B2: natural end -> state='idle' + playingLineId cleared (stop() called).
       expect(replay.state.value).toBe('idle')
       expect(store.playingLineId).toBeNull()
+      // AC-3 negative: emotion returns to idle for all roles (MG2 stop() reset).
+      for (const role of Object.values(useGameStore().gameRoles)) {
+        expect(role.emotion).toBe('正常')
+      }
     } finally {
       vi.restoreAllMocks()
     }
