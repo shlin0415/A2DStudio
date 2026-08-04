@@ -21,6 +21,12 @@ try:
     from ling_chat.api.audio_clips import router as audio_clips_router
 except ImportError:
     audio_clips_router = None
+
+# A2D Studio: per-save export persistence (Option B)
+try:
+    from ling_chat.api.a2d_save import router as a2d_save_router
+except ImportError:
+    a2d_save_router = None
 from ling_chat.api.env_config import router as env_config_router
 from ling_chat.api.file_selector import router as file_selector_router
 from ling_chat.api.frontend_routes import (
@@ -67,6 +73,13 @@ class RoutesManager:
         if audio_clips_router is not None:
             try:
                 app.include_router(audio_clips_router)
+            except Exception:
+                pass
+
+        # A2D Studio: per-save export persistence (Option B)
+        if a2d_save_router is not None:
+            try:
+                app.include_router(a2d_save_router)
             except Exception:
                 pass
 

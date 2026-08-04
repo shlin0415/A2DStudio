@@ -384,19 +384,27 @@ describe('playNextInQueue callback threading (B1/B2 fix)', () => {
     showInfoSpy.mockRestore()
   })
 
-  // AC-5 negative: live TTS arriving mid-replay does NOT interrupt replay audio.
+  // AC-5 negative: live TTS arriving mid-replay routes to pending queue via the
+  // real routing guard (routeLiveAudio), does NOT interrupt replay audio.
   it('engine: live TTS mid-replay routes to pending queue, not active queue (AC-5 negative)', async () => {
     const { pendingLiveQueue, audioQueue } = await import('@/composables/audio-queue')
+    const { routeLiveAudio, setReplayActive } = await import('@/composables/useA2DWebSocket')
     const store = useScriptStore()
     store.addLine(makeLine('r1', 0))
     _resetReplaySingleton()
     const replay = useA2DReplay()
-    replay.start(0)
+    replay.start(0) // sets replayActive = true
     const activeQueueLen = audioQueue.value.length
 
-    // Live TTS arrives while replay active -> pendingLiveQueue, NOT audioQueue.
-    pendingLiveQueue.value = [{ url: '/audio/interrupt.wav', lineId: 'intrude' }]
+    // Drive the REAL routing guard with replay active.
+    routeLiveAudio('http://host/audio/live.wav', 'live1', true)
     expect(audioQueue.value.length).toBe(activeQueueLen) // active queue untouched
     expect(pendingLiveQueue.value.length).toBe(1) // deferred
+    expect(pendingLiveQueue.value[0].lineId).toBe('live1')
+
+    // AC-5 corollary: with replay inactive, same item routes to active queue.
+    setReplayActive(false)
+    routeLiveAudio('http://host/audio/live2.wav', 'live2', false)
+    expect(audioQueue.value.length).toBe(activeQueueLen + 1) // enqueued for playback
   })
 })

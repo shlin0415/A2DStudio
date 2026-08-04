@@ -83,8 +83,27 @@ export function exportSession() {
     stages: Object.entries(script.stageMap).map(([id, default_background]) => ({ id, default_background })),
   }
 
+  // Option B persistence: send envelope to backend to copy WAVs into a
+  // per-save audio dir + rewrite audio_paths to the persistent route.
+  // Falls back to plain client download if the backend is unavailable.
+  persistToBackend(envelope).catch(() => { /* offline fallback below */ })
+
   const blob = new Blob([JSON.stringify(envelope, null, 2)], { type: 'application/json' })
   triggerDownload(blob, `save-${stamp()}.a2d.json`)
+}
+
+/** POST envelope to backend for persistent storage. Best-effort (no throw). */
+async function persistToBackend(envelope: ExportEnvelope): Promise<void> {
+  const res = await fetch('/api/a2d/save', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ envelope }),
+  })
+  if (!res.ok) throw new Error(`backend save failed: ${res.status}`)
+  const data = await res.json()
+  if (data?.save_id) {
+    console.log(`[A2D] save persisted: ${data.save_id}`)
+  }
 }
 
 /**

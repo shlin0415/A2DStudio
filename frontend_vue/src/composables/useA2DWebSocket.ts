@@ -94,6 +94,25 @@ const speakerToRoleId: Record<string, number> = {}
 // Replay engine drains it after replay ends (DEC-2 deferred queue + toast).
 let replayActive = false
 
+/**
+ * Route a live TTS audio item based on replay state.
+ * When replay is active, defers to pendingLiveQueue (prevents corrupting replay).
+ * Otherwise, enqueues immediately for playback.
+ * Exported for testing the AC-5 negative case discriminatively.
+ */
+export function routeLiveAudio(url: string, lineId: string, isReplayActive: boolean): void {
+  if (isReplayActive) {
+    pendingLiveQueue.value.push({ url, lineId })
+    emitTrace('audio_deferred_replay_active', { lineId })
+  } else {
+    audioQueue.value.push({ url, lineId })
+    if (!isAudioPlaying.value) {
+      const store = useScriptStore()
+      playNextInQueue(store)
+    }
+  }
+}
+
 export function setReplayActive(active: boolean) {
   replayActive = active
   // On replay end, drain pending live items into the main queue + toast (DEC-2).
@@ -293,17 +312,8 @@ export function useA2DWebSocket() {
             // audio_url: real-usage audio source for ASR eval (trace_hook capture mode)
             emitTrace('ws_tts_ready', { lineId, audio_url: url })
             emitTrace('audio_queued', { lineId })
-            // Replay isolation: when replay is active, route live TTS to pending
-            // queue instead of the active replay queue (prevents audio corruption).
-            if (replayActive) {
-              pendingLiveQueue.value.push({ url, lineId })
-              emitTrace('audio_deferred_replay_active', { lineId })
-            } else {
-              audioQueue.value.push({ url, lineId })
-              if (!isAudioPlaying.value) {
-                playNextInQueue(store)
-              }
-            }
+            // Replay isolation: route live TTS to pending queue when replay active.
+            routeLiveAudio(url, lineId, replayActive)
           }
           break
         }
