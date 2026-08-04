@@ -1,32 +1,19 @@
-"""Backend round-trip test for A2D save persistence (Option B, DEC-1)."""
+"""Backend test for A2D save persistence (Option B, DEC-1).
+
+Tests the pure persist_envelope() logic WITHOUT FastAPI (the env has a
+FastAPI 0.104.1 / Starlette 1.3.1 mismatch that breaks TestClient).
+This keeps the test runnable in the default `pytest` invocation so the
+copy/rewrite path is actually exercised (not skipif-gated).
+"""
 import json
 import os
 import tempfile
 from pathlib import Path
+from unittest.mock import patch
 
 import pytest
 
-from tests import BACKEND_URL, backend_ok
-
-pytestmark = pytest.mark.skipif(not backend_ok(), reason="backend not running")
-
-
-def _post(path, data=None):
-    import urllib.request
-    req = urllib.request.Request(
-        f"{BACKEND_URL}{path}",
-        data=json.dumps(data).encode() if data else None,
-        headers={"Content-Type": "application/json"},
-        method="POST",
-    )
-    with urllib.request.urlopen(req, timeout=10) as resp:
-        return json.loads(resp.read()), resp.status
-
-
-def _get(path):
-    import urllib.request
-    with urllib.request.urlopen(f"{BACKEND_URL}{path}", timeout=10) as resp:
-        return resp.read(), resp.status
+from ling_chat.api.a2d_persist import persist_envelope
 
 
 def _make_envelope(lines):
@@ -37,58 +24,66 @@ def _make_envelope(lines):
     }
 
 
-class TestA2DSave:
+class TestPersistEnvelope:
     def setup_method(self):
-        # Seed a temp audio dir with real WAV bytes.
+        # Seed real WAV bytes in a temp audio dir.
         self.tmp_dir = tempfile.mkdtemp(prefix="a2d_test_")
         self.wav_dir = Path(self.tmp_dir) / "audio"
         self.wav_dir.mkdir()
-        # Two WAV files in the on-disk format: a2d_{line_id}.wav.
         (self.wav_dir / "a2d_lineA.wav").write_bytes(b"RIFF-lineA-wav-bytes")
         (self.wav_dir / "a2d_lineB.wav").write_bytes(b"RIFF-lineB-wav-bytes")
-        # Point TEMP_VOICE_DIR at our temp dir.
-        os.environ["TEMP_VOICE_DIR"] = str(self.wav_dir)
+        # Isolated save dir per test.
+        self.save_dir = Path(tempfile.mkdtemp(prefix="a2d_save_")) / "save001"
+        self.audio_dir = self.save_dir / "audio"
+        self.audio_dir.mkdir(parents=True)
 
     def teardown_method(self):
         os.environ.pop("TEMP_VOICE_DIR", None)
 
-    def test_save_copies_wavs_and_rewrites_paths(self):
-        """Export 2-line envelope -> WAVs copied, audio_paths rewritten to per-save route."""
-        envelope = _make_envelope([
-            {"id": "l1", "audio_path": "/audio/a2d_lineA.wav"},
-            {"id": "l2", "audio_path": "/audio/a2d_lineB.wav"},
-        ])
-        body, status = _post("/api/a2d/save", {"envelope": envelope})
-        assert status == 200
-        assert body["ok"] is True
-        save_id = body["save_id"]
-        assert save_id
+    def test_copies_wavs_and_rewrites_paths(self):
+        """WAVs copied to bare line_id path; audio_paths rewritten to per-save route."""
+        with patch.dict(os.environ, {"TEMP_VOICE_DIR": str(self.wav_dir)}):
+            envelope = _make_envelope([
+                {"id": "l1", "audio_path": "/audio/a2d_lineA.wav"},
+                {"id": "l2", "audio_path": "/audio/a2d_lineB.wav"},
+            ])
+            copied = persist_envelope(envelope, self.save_dir, self.audio_dir)
 
-        # Re-fetch snapshot: audio_paths rewritten to per-save route.
-        snap_bytes, status = _get(f"/api/a2d/save/{save_id}")
-        assert status == 200
-        snap = json.loads(snap_bytes)
-        lines = snap["script"]["lines"]
-        assert lines[0]["audio_path"] == f"/api/a2d/save/audio/{save_id}/lineA.wav"
-        assert lines[1]["audio_path"] == f"/api/a2d/save/audio/{save_id}/lineB.wav"
+        assert copied == 2
+        # Destination uses bare line_id (matches serve route).
+        assert (self.audio_dir / "lineA.wav").exists()
+        assert (self.audio_dir / "lineB.wav").exists()
+        # Bytes preserved.
+        assert (self.audio_dir / "lineA.wav").read_bytes() == b"RIFF-lineA-wav-bytes"
+        # Paths rewritten to per-save route.
+        lines = envelope["script"]["lines"]
+        assert lines[0]["audio_path"] == "/api/a2d/save/audio/save001/lineA.wav"
+        assert lines[1]["audio_path"] == "/api/a2d/save/audio/save001/lineB.wav"
 
-        # Served WAVs return the original bytes.
-        wav_bytes, status = _get(f"/api/a2d/save/audio/{save_id}/lineA.wav")
-        assert status == 200
-        assert wav_bytes == b"RIFF-lineA-wav-bytes"
-
-    def test_save_handles_missing_audio_gracefully(self):
+    def test_missing_audio_graceful(self):
         """Lines whose source WAV doesn't exist are skipped, not failed."""
-        envelope = _make_envelope([
-            {"id": "l1", "audio_path": "/audio/a2d_nonexistent.wav"},
-        ])
-        body, status = _post("/api/a2d/save", {"envelope": envelope})
-        assert status == 200
-        assert body["ok"] is True
+        with patch.dict(os.environ, {"TEMP_VOICE_DIR": str(self.wav_dir)}):
+            envelope = _make_envelope([
+                {"id": "l1", "audio_path": "/audio/a2d_nonexistent.wav"},
+            ])
+            copied = persist_envelope(envelope, self.save_dir, self.audio_dir)
 
-    def test_path_traversal_rejected(self):
-        """Backslash/.. in path components returns 400."""
-        import urllib.error
-        with pytest.raises(urllib.error.HTTPError) as excinfo:
-            _get("/api/a2d/save/audio/..%2F..%2Fetc/passwd.wav")
-        assert excinfo.value.code in (400, 404)
+        assert copied == 0
+        # Path still rewritten even when copy failed.
+        assert envelope["script"]["lines"][0]["audio_path"] == "/api/a2d/save/audio/save001/nonexistent.wav"
+
+    def test_non_audio_lines_untouched(self):
+        """Lines without audio_path or with non-matching paths are left alone."""
+        with patch.dict(os.environ, {"TEMP_VOICE_DIR": str(self.wav_dir)}):
+            envelope = _make_envelope([
+                {"id": "l1", "audio_path": None},
+                {"id": "l2", "audio_path": "/some/other/file.mp3"},
+                {"id": "l3", "audio_path": "/audio/a2d_lineA.wav"},
+            ])
+            copied = persist_envelope(envelope, self.save_dir, self.audio_dir)
+
+        assert copied == 1
+        lines = envelope["script"]["lines"]
+        assert lines[0]["audio_path"] is None
+        assert lines[1]["audio_path"] == "/some/other/file.mp3"
+        assert lines[2]["audio_path"] == "/api/a2d/save/audio/save001/lineA.wav"

@@ -1,17 +1,10 @@
 """
-A2D Studio: per-save export persistence (Option B).
+A2D Studio: per-save export persistence (Option B) — FastAPI routes.
 
-On export, the frontend sends the .a2d.json envelope. This endpoint:
-  - assigns a save_id
-  - writes the snapshot to data/saves/{save_id}/snapshot.json
-  - copies per-line WAVs from the temp audio dir to data/saves/{save_id}/audio/
-  - rewrites audio_paths to /api/a2d/save/audio/{save_id}/{line_id}.wav
-  - serves those WAVs via GET /api/a2d/save/audio/{save_id}/{line_id}.wav
-
-This makes exports survive temp cleanup and machine migration (DEC-1 = Option B).
+Thin route layer over the pure logic in a2d_persist.py (which has no FastAPI
+dependency so it can be unit-tested without triggering the env's
+FastAPI 0.104.1 / Starlette 1.3.1 version mismatch).
 """
-import os
-import shutil
 import uuid
 from pathlib import Path
 from typing import Any
@@ -20,22 +13,14 @@ from fastapi import APIRouter, HTTPException
 from fastapi.responses import FileResponse, JSONResponse
 from pydantic import BaseModel
 
+from ling_chat.api.a2d_persist import persist_envelope, SAVE_BASE_DIR
 from ling_chat.core.logger import logger
-from ling_chat.utils.runtime_path import temp_path, user_data_path
 
 router = APIRouter()
-
-# Persistent base dir for A2D saves — anchored to user_data_path so exports survive
-# machine migration and are independent of backend CWD (NOT the ephemeral temp_path).
-SAVE_BASE_DIR = user_data_path / "a2d_saves"
 
 
 class A2DSaveRequest(BaseModel):
     envelope: dict[str, Any]
-
-
-def _temp_audio_dir() -> Path:
-    return Path(os.environ.get("TEMP_VOICE_DIR", temp_path / "audio"))
 
 
 @router.post("/api/a2d/save")
@@ -50,27 +35,7 @@ async def save_a2d_envelope(req: A2DSaveRequest):
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"创建保存目录失败: {e}")
 
-    # Rewrite audio_paths + copy WAVs.
-    temp_audio = _temp_audio_dir()
-    lines = envelope.get("script", {}).get("lines", [])
-    copied = 0
-    for line in lines:
-        audio_path = line.get("audio_path") or ""
-        # Only rewrite paths pointing at the temp /audio mount.
-        # On-disk format: /audio/a2d_{line_id}.wav (core.py L933/939).
-        if audio_path.startswith("/audio/a2d_") and audio_path.endswith(".wav"):
-            audio_filename = audio_path.rsplit("/", 1)[-1]            # "a2d_{line_id}.wav"
-            line_id = audio_filename[4:-4]                           # strip "a2d_" + ".wav"
-            src = temp_audio / audio_filename                         # correct on-disk path
-            dst = audio_dir / audio_filename
-            if src.exists():
-                try:
-                    shutil.copy2(src, dst)
-                    copied += 1
-                except Exception as e:
-                    logger.warning(f"复制音频失败 {src} -> {dst}: {e}")
-            # Rewrite to the persistent-serving route regardless of copy success.
-            line["audio_path"] = f"/api/a2d/save/audio/{save_id}/{line_id}.wav"
+    copied = persist_envelope(envelope, save_dir, audio_dir)
 
     # Write the (rewritten) snapshot.
     snapshot_path = save_dir / "snapshot.json"
@@ -80,7 +45,7 @@ async def save_a2d_envelope(req: A2DSaveRequest):
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"保存快照失败: {e}")
 
-    logger.info(f"A2D save {save_id}: {len(lines)} lines, {copied} audio files copied")
+    logger.info(f"A2D save {save_id}: {len(envelope.get('script', {}).get('lines', []))} lines, {copied} audio files copied")
     return JSONResponse({"ok": True, "save_id": save_id, "url": f"/api/a2d/save/{save_id}"})
 
 
