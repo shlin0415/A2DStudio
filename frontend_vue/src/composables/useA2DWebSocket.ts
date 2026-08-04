@@ -83,24 +83,40 @@ function shutdownAudio() {
   }
 }
 
+import { audioQueue, isAudioPlaying, pendingLiveQueue, drainPendingLiveQueue } from './audio-queue'
+
 // speaker-to-roleId mapping built from a2d.characters payload
 const speakerToRoleId: Record<string, number> = {}
 
-// ── Audio queue: sequential playback to prevent overlap ────
-const audioQueue: { url: string; lineId: string }[] = []
-let isAudioPlaying = false
+// ── Replay queue isolation ────
+// When replay is active, live WS tts_ready route to pendingLiveQueue (audio-queue.ts).
+// Replay engine drains it after replay ends (DEC-2 deferred queue + toast).
+let replayActive = false
 
-async function playNextInQueue(store?: ReturnType<typeof import('@/stores/modules/script')['useScriptStore']>) {
-  if (audioQueue.length === 0) {
-    isAudioPlaying = false
+export function setReplayActive(active: boolean) {
+  replayActive = active
+  // On replay end, drain pending live items into the main queue.
+  if (!active && pendingLiveQueue.value.length > 0 && !isAudioPlaying.value) {
+    drainPendingLiveQueue()
+    const store = useScriptStore()
+    playNextInQueue(store)
+  }
+}
+
+async function playNextInQueue(
+  store?: ReturnType<typeof import('@/stores/modules/script')['useScriptStore']>,
+  onItemStart?: (line: ScriptLine) => void,
+) {
+  if (audioQueue.value.length === 0) {
+    isAudioPlaying.value = false
     if (store) {
       store.isAudioPlaying = false
     }
     emitTrace('audio_queue_empty')
     return
   }
-  isAudioPlaying = true
-  const item = audioQueue.shift()!
+  isAudioPlaying.value = true
+  const item = audioQueue.value.shift()!
   emitTrace('audio_start', { lineId: item.lineId })
 
   if (store) {
@@ -110,6 +126,8 @@ async function playNextInQueue(store?: ReturnType<typeof import('@/stores/module
 
     const gameStore = useGameStore()
     const line = store.lines.find(l => l.id === item.lineId)
+    // Replay engine hook: sync subtitle + emotion at item start (before audio plays).
+    if (line && onItemStart) onItemStart(line)
     if (line) {
       const speaker = line.speaker
       const emotion = (line as Record<string, unknown>).emotion as string | undefined
@@ -246,10 +264,16 @@ export function useA2DWebSocket() {
             // audio_url: real-usage audio source for ASR eval (trace_hook capture mode)
             emitTrace('ws_tts_ready', { lineId, audio_url: url })
             emitTrace('audio_queued', { lineId })
-            // Queue {url, lineId} for sequential playback + subtitle sync
-            audioQueue.push({ url, lineId })
-            if (!isAudioPlaying) {
-              playNextInQueue(store)
+            // Replay isolation: when replay is active, route live TTS to pending
+            // queue instead of the active replay queue (prevents audio corruption).
+            if (replayActive) {
+              pendingLiveQueue.value.push({ url, lineId })
+              emitTrace('audio_deferred_replay_active', { lineId })
+            } else {
+              audioQueue.value.push({ url, lineId })
+              if (!isAudioPlaying.value) {
+                playNextInQueue(store)
+              }
             }
           }
           break
@@ -336,5 +360,10 @@ export function useA2DWebSocket() {
     connect, disconnect,
     sendStart, sendContinue, sendRetry, sendRegenerateTTS, sendSetBatchSize,
     logUserAction,
+    playNextInQueue,
   }
 }
+
+// Explicit named export (avoids TS2459 cascade when async function declaration
+// confuses export-boundary resolution in the return-object form).
+export { playNextInQueue }

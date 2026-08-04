@@ -8,6 +8,9 @@
     <!-- P1 replay overlay: renders per-line visual (background/text/image). -->
     <StageOverlay :visual="currentVisual" />
 
+    <!-- P1 replay subtitle: current line display_text synced to playback. -->
+    <SubtitleOverlay :text="replaySubtitle" />
+
     <!-- A2D overlay: script editor panel at bottom -->
     <ScriptPanel />
   </div>
@@ -15,9 +18,10 @@
 
 <script setup lang="ts">
 import { computed, watch } from 'vue'
-import { GameBackground, GameRolesStage, GameDialog, StageOverlay } from '@/components/game/standard'
+import { GameBackground, GameRolesStage, GameDialog, StageOverlay, SubtitleOverlay } from '@/components/game/standard'
 import ScriptPanel from '@/components/game/ScriptPanel.vue'
 import { useA2DWebSocket } from '@/composables/useA2DWebSocket'
+import { useA2DReplay } from '@/composables/useA2DReplay'
 import { useScriptStore } from '@/stores/modules/script'
 import { useSettingsStore } from '@/stores/modules/settings'
 import { resolveVisual } from '@/composables/overlay-resolve'
@@ -25,6 +29,10 @@ import type { ScriptLine } from '@/stores/modules/script'
 
 // WS lifecycle: auto-connect on mount, singleton shared with child components
 useA2DWebSocket()
+
+// P1 replay engine (singleton). M4 transport controls will drive start/pause/stop.
+const replay = useA2DReplay()
+const replaySubtitle = replay.currentSubtitle
 
 const scriptStore = useScriptStore()
 const settingsStore = useSettingsStore()
