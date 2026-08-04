@@ -20,11 +20,17 @@ interface RollbackData {
   ts: number
 }
 
+export interface StageInfo {
+  id: string
+  default_background: string
+}
+
 export interface ExportEnvelope {
   version: number
   exportedAt: string
   script: ScriptSnapshot
   game: GameSnapshot
+  stages?: StageInfo[]
 }
 
 export interface ImportResult {
@@ -73,6 +79,8 @@ export function exportSession() {
       gameRoles: game.gameRoles,
       presentRoleIds: game.presentRoleIds,
     },
+    // stages[] carries stage_id -> default_background for replay background resolution.
+    stages: Object.entries(script.stageMap).map(([id, default_background]) => ({ id, default_background })),
   }
 
   const blob = new Blob([JSON.stringify(envelope, null, 2)], { type: 'application/json' })
@@ -265,6 +273,10 @@ export async function importSession(file: File): Promise<ImportResult> {
     gameRoles: env.game?.gameRoles ?? {},
     presentRoleIds: env.game?.presentRoleIds ?? [],
   })
+  // P1 replay: populate stageMap from envelope stages[] (optional, v2 field).
+  if (env.stages?.length) {
+    script.setStageMap(Object.fromEntries(env.stages.map(s => [s.id, s.default_background])))
+  }
 
   return { ok: true }
 }

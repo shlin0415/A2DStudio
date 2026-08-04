@@ -26,7 +26,13 @@
     <!-- Paused — edit + continue -->
     <div v-else-if="store.isPaused && store.currentLine" class="edit-area">
       <div class="edit-row">
-        <button class="btn-icon" @click="replayAudio" title="播放">&#x25B6;</button>
+        <!-- P1 replay transport controls (AC-6) -->
+        <div class="replay-transport">
+          <button class="btn-icon" @click="replayStart" title="播放">&#x25B6;</button>
+          <button class="btn-icon" @click="replayPause" title="暂停" :disabled="!replay.isPlaying.value">&#x275A;&#x275A;</button>
+          <button class="btn-icon" @click="replayResume" title="继续" :disabled="!replay.isPaused.value">&#x25B6;</button>
+          <button class="btn-icon" @click="replayStop" title="停止">&#x25A0;</button>
+        </div>
         <textarea
           v-model="editingText"
           class="text-editor"
@@ -105,10 +111,12 @@
 import { ref, watch, computed } from 'vue'
 import { useScriptStore } from '@/stores/modules/script'
 import { useA2DWebSocket } from '@/composables/useA2DWebSocket'
+import { useA2DReplay } from '@/composables/useA2DReplay'
 import { exportSession, importSession, commitImport } from '@/composables/useA2DSaveLoad'
 
 const store = useScriptStore()
 const { sendStart, sendContinue, sendRetry, sendRegenerateTTS, logUserAction } = useA2DWebSocket()
+const replay = useA2DReplay()
 
 const batchSize = ref(1)
 const importInput = ref<HTMLInputElement | null>(null)
@@ -177,11 +185,14 @@ const errorLabel = computed(() => {
   return labels[store.error?.error_type || 'unknown'] || '错误'
 })
 
-function replayAudio() {
-  // Explicit user action = commit any pending import (preview-mode, DEC-1).
+// P1 replay transport controls (AC-6).
+function replayStart() {
   commitImport()
-  store.setPhase('paused')
+  replay.start(store.selectedLine ? store.lines.findIndex(l => l.id === store.selectedLineId) || 0 : 0)
 }
+function replayPause() { replay.pause() }
+function replayResume() { replay.resume() }
+function replayStop() { replay.stop() }
 
 function handleStart() {
   // Explicit user action = commit any pending import (preview-mode, DEC-1).

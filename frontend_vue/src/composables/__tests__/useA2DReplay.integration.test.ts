@@ -4,6 +4,7 @@
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest'
 import { setActivePinia, createPinia } from 'pinia'
 import { useScriptStore, type ScriptLine } from '@/stores/modules/script'
+import { useGameStore } from '@/stores/modules/game'
 import { audioQueue } from '@/composables/audio-queue'
 import { useA2DReplay, _resetReplaySingleton } from '@/composables/useA2DReplay'
 
@@ -171,7 +172,7 @@ describe('playNextInQueue callback threading (B1/B2 fix)', () => {
 
   // MG5 regression guard: seek() resets isAudioPlaying so playback starts.
   it('engine: seek resets isAudioPlaying so playback starts (MG5)', async () => {
-    const { isAudioPlaying } = await import('@/composables/audio-queue')
+    const { isAudioPlaying, audioQueue } = await import('@/composables/audio-queue')
     class FakeAudio {
       src = ''; muted = false; currentTime = 0
       onended: (() => void) | null = null
@@ -182,6 +183,7 @@ describe('playNextInQueue callback threading (B1/B2 fix)', () => {
     }
     // @ts-expect-error override Audio constructor
     globalThis.Audio = FakeAudio
+    const origSetTimeout = global.setTimeout
     vi.spyOn(global, 'setTimeout').mockImplementation((fn: () => void) => {
       if (typeof fn === 'function') fn()
       return 0 as unknown as ReturnType<typeof setTimeout>
@@ -201,9 +203,48 @@ describe('playNextInQueue callback threading (B1/B2 fix)', () => {
       // MG5: seek resets isAudioPlaying so the new items actually play.
       replay.seek(2)
       expect(store.playingLineId).toBe('k3')
-      expect(isAudioPlaying.value).toBe(true) // playback started for k3
+      // After seek, enqueueFromIndex must actually start playback for k3,
+      // draining it from the queue. Before the fix, isAudioPlaying was left
+      // true and enqueueFromIndex skipped playNextInQueue, leaving k3 stuck.
+      await new Promise(r => origSetTimeout(r, 5))
+      expect(replay.state.value).toBe('playing')
+      expect(audioQueue.value.length).toBe(0) // k3 dequeued (playing)
+      expect(isAudioPlaying.value).toBe(true)
     } finally {
       vi.restoreAllMocks()
     }
+  })
+
+  // task9: sprite_positions applied to gameRoles (AC-4 b-axis).
+  it('engine: applySpritePositions writes offsetX/offsetY/scale to gameRoles (task9)', async () => {
+    const gameStore = useGameStore()
+    gameStore.importFromSnapshot({
+      gameRoles: { 1: { roleId: 1, roleName: 'ema', emotion: '正常', originalEmotion: '正常', scale: 1, offsetX: 0, offsetY: 0, show: true } },
+      presentRoleIds: [1],
+    })
+
+    const store = useScriptStore()
+    const line: ScriptLine = {
+      id: 'sp1', speaker: 'ema', display_text: '文本', tts_text: 'TTS', index: 0,
+      audio_path: null, stage_id: '',
+      overlay: { sprite_positions: { ema: { x: 30, y: 60, scale: 1.2 } } } as any,
+    }
+
+    _resetReplaySingleton()
+    const replay = useA2DReplay()
+    // Directly invoke the sprite application via the engine's public surface.
+    replay.seek(0) // sets playingLineId; watch triggers applySpritePositions
+
+    // Manually apply through a fresh start to exercise applySpritePositions.
+    store.lines.length = 0
+    store.lines.push(line as any)
+    store.playingLineId = line.id
+    // Trigger the watch by advancing.
+    await new Promise(r => setTimeout(r, 10))
+
+    // Sprite positions written to gameRoles[1].
+    expect(gameStore.gameRoles[1].offsetX).toBe(30)
+    expect(gameStore.gameRoles[1].offsetY).toBe(60)
+    expect(gameStore.gameRoles[1].scale).toBe(1.2)
   })
 })

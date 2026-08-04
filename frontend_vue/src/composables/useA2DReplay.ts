@@ -95,10 +95,11 @@ export function useA2DReplay() {
     }
   }
 
-  /** Replay engine hook: sync subtitle + emotion when an audio item starts. */
+  /** Replay engine hook: sync subtitle + emotion + sprites when an audio item starts. */
   function onItemStart(line: ScriptLine) {
     currentSubtitle.value = line.display_text
     applyEmotion(line)
+    applySpritePositions(line)
   }
 
   /** On each audio end: advance the state machine. Returns false at replay end. */
@@ -106,14 +107,15 @@ export function useA2DReplay() {
     advance()
   }
 
-  // Robust per-line subtitle + emotion sync: watch playingLineId so sync works
-  // regardless of callback threading (guards against B1 regression).
+  // Robust per-line subtitle + emotion + sprite sync: watch playingLineId so
+  // sync works regardless of callback threading (guards against B1 regression).
   watch(() => scriptStore.playingLineId, (id) => {
     if (!id) return
     const line = scriptStore.lines.find(l => l.id === id)
     if (line) {
       currentSubtitle.value = line.display_text
       applyEmotion(line)
+      applySpritePositions(line)
     }
   })
 
@@ -176,6 +178,7 @@ export function useA2DReplay() {
     scriptStore.playingLineId = line.id
     currentSubtitle.value = line.display_text
     applyEmotion(line)
+    applySpritePositions(line)
     return true
   }
 
@@ -188,6 +191,21 @@ export function useA2DReplay() {
     if (roleId != null && gameStore.gameRoles[roleId]) {
       gameStore.gameRoles[roleId].emotion = emotion
       gameStore.gameRoles[roleId].originalEmotion = emotion
+    }
+  }
+
+  /** Apply per-line sprite positions to gameRoles (AC-4 b-axis). */
+  function applySpritePositions(line: ScriptLine): void {
+    const sprites = line.overlay?.sprite_positions
+    if (!sprites) return
+    for (const [speaker, pos] of Object.entries(sprites)) {
+      const roleId = findRoleIdForSpeaker(speaker)
+      if (roleId != null && gameStore.gameRoles[roleId]) {
+        const role = gameStore.gameRoles[roleId]
+        if (pos.x != null) role.offsetX = pos.x
+        if (pos.y != null) role.offsetY = pos.y
+        if (pos.scale != null) role.scale = pos.scale
+      }
     }
   }
 

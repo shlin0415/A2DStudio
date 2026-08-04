@@ -30,19 +30,16 @@ import type { ScriptLine } from '@/stores/modules/script'
 // WS lifecycle: auto-connect on mount, singleton shared with child components
 useA2DWebSocket()
 
-// P1 replay engine (singleton). M4 transport controls will drive start/pause/stop.
+// P1 replay engine (singleton). Transport controls in ReviewPanel/EventTrack.
 const replay = useA2DReplay()
 const replaySubtitle = replay.currentSubtitle
 
 const scriptStore = useScriptStore()
 const settingsStore = useSettingsStore()
 
-// stageMap: stage_id -> default_background. M3 task9 MUST replace with real map
-// parsed from the replay envelope's stages[]. Currently empty (line-only fallback).
-const stageMap = computed<Record<string, string>>(() => {
-  // TODO(M3): parse stage_id -> default_background from replay envelope stages
-  return {}
-})
+// stageMap: stage_id -> default_background, sourced from the imported envelope
+// stages[] via scriptStore (populated in importSession).
+const stageMap = computed<Record<string, string>>(() => scriptStore.stageMap)
 
 // M3 replay engine will switch this source to playingLineId.
 const playingLine = computed<ScriptLine | null>(() => {

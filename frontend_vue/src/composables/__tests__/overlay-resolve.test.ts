@@ -70,4 +70,23 @@ describe('resolveVisual', () => {
     expect(v?.bgmVolume).toBe(1)
     expect(v?.bgmLoop).toBe(true)
   })
+
+  // task9: stageMap background fallback (line -> stage -> global priority chain).
+  it('applies stageMap background fallback when line has no overlay background', () => {
+    const line = makeLine({ stage_id: 's1' } as any)
+    const v = resolveVisual(line, { s1: 'stage-bg.webp' }, 'global-bg.webp')
+    expect(v?.background).toBe('stage-bg.webp')
+  })
+
+  it('falls back to globalDefault when line has no stage_id match', () => {
+    const line = makeLine({ stage_id: 'unknown' } as any)
+    const v = resolveVisual(line, { s1: 'stage-bg.webp' }, 'global-bg.webp')
+    expect(v?.background).toBe('global-bg.webp')
+  })
+
+  it('line overlay background wins over stageMap + global', () => {
+    const line = makeLine({ overlay: { background: 'line-bg.webp' } } as any)
+    const v = resolveVisual(line, { s1: 'stage-bg.webp' }, 'global-bg.webp')
+    expect(v?.background).toBe('line-bg.webp')
+  })
 })

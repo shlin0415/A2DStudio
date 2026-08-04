@@ -105,6 +105,9 @@ export const useScriptStore = defineStore('script', () => {
   const playingLineId = ref<string | null>(null)
   const isAudioPlaying = ref(false)
 
+  // P1 replay: stage_id -> default_background map (populated from import envelope).
+  const stageMap = ref<Record<string, string>>({})
+
   const isThinking = computed(() => phase.value === 'thinking')
   const isTranslating = computed(() => phase.value === 'translating')
   const isSynthesizing = computed(() => phase.value === 'synthesizing')
@@ -158,6 +161,11 @@ export const useScriptStore = defineStore('script', () => {
     error.value = null
   }
 
+  // P1 replay: populate stageMap from imported envelope stages[].
+  function setStageMap(map: Record<string, string>): void {
+    stageMap.value = map || {}
+  }
+
   function reset() {
     lines.value = []
     currentLine.value = null
@@ -171,6 +179,7 @@ export const useScriptStore = defineStore('script', () => {
     batchTotal.value = 0
     playingLineId.value = null
     isAudioPlaying.value = false
+    stageMap.value = {}
   }
 
   // ── Cross-tab editor helpers ────────────────────
@@ -237,10 +246,10 @@ export const useScriptStore = defineStore('script', () => {
 
   return {
     lines, currentLine, phase, error, generationId,
-    selectedLineId, editedText, activeTab, selectedLine,
+    selectedLineId, editedText, activeTab, selectedLine, stageMap,
     batchIndex, batchTotal, playingLineId, isAudioPlaying, playingLine,
     isThinking, isTranslating, isSynthesizing, isPaused, hasError, isIdle, isBusy,
-    addLine, setPhase, setError, clearError, reset,
+    addLine, setPhase, setError, clearError, reset, setStageMap,
     selectLine, setEdited, clearEdited, commitEdits, importFromSnapshot,
   }
 })

@@ -28,14 +28,22 @@ import { ref, watch, nextTick } from 'vue'
 import { useScriptStore } from '@/stores/modules/script'
 import { useA2DWebSocket } from '@/composables/useA2DWebSocket'
 import type { ScriptLine } from '@/stores/modules/script'
+import { useA2DReplay } from '@/composables/useA2DReplay'
 
 const store = useScriptStore()
 const { logUserAction } = useA2DWebSocket()
+const replay = useA2DReplay()
 const trackRef = ref<HTMLElement | null>(null)
 
 function onLineClick(line: ScriptLine) {
   logUserAction('click', `EventTrack line[${line.index}]`, `${line.speaker}: ${line.display_text.slice(0, 40)}`)
-  store.selectLine(line.id)
+  // P1 replay: when an imported script is loaded (paused + has lines), clicking
+  // a line starts replay from that index (AC-2).
+  if (store.phase === 'paused' && store.lines.length > 0 && line.index >= 0 && line.index < store.lines.length) {
+    replay.start(line.index)
+  } else {
+    store.selectLine(line.id)
+  }
 }
 
 // Auto-scroll to bottom when new lines arrive (only if user is near bottom)
