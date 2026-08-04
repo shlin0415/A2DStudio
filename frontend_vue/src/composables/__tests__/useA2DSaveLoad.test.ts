@@ -19,8 +19,8 @@ afterEach(() => {
   sessionStorage.clear()
 })
 
-function makeLine(id: string, index: number) {
-  return { id, speaker: 'ema' as const, display_text: `文本${id}`, tts_text: `TTS${id}`, index }
+function makeLine(id: string, index: number, extra: Partial<ScriptLine> = {}) {
+  return { id, speaker: 'ema' as const, display_text: `文本${id}`, tts_text: `TTS${id}`, index, audio_path: null, overlay: null, stage_id: '', ...extra }
 }
 
 function setIdle() {
@@ -140,10 +140,10 @@ describe('exportSession', () => {
       expect(env.script.phase).toBe('paused')
       expect(env.script.selectedLineId).toBe('l1')
       expect(env.script.activeTab).toBe('review')
-      // whitelisted: NO backend-only fields should appear
-      expect(env.script.lines[0]).not.toHaveProperty('overlay')
-      expect(env.script.lines[0]).not.toHaveProperty('audio_path')
-      expect(env.script.lines[0]).not.toHaveProperty('stage_id')
+      // v2 whitelist: replay extensions ARE exported (null when unset)
+      expect(env.script.lines[0]).toHaveProperty('audio_path', null)
+      expect(env.script.lines[0]).toHaveProperty('overlay', null)
+      expect(env.script.lines[0]).toHaveProperty('stage_id', '')
       // NO excluded frontend transient fields
       expect(env).not.toHaveProperty('error')
       expect(env).not.toHaveProperty('isAudioPlaying')
@@ -423,6 +423,77 @@ describe('importSession', () => {
     expect(store.editedText).toEqual({ x1: '自定义文本' })
     expect(store.phase).toBe('paused')
   })
+
+  it('v1→v2 compat: old snapshot lacking audio_path/overlay/stage_id imports with null defaults', async () => {
+    const store = setIdle()
+    // v1 snapshot: lines lack the v2 replay-extension fields entirely.
+    const v1Env = {
+      version: 1,
+      exportedAt: new Date().toISOString(),
+      script: {
+        version: 1, exportedAt: new Date().toISOString(),
+        lines: [
+          { id: 'old1', speaker: 'ema', display_text: '旧文本', tts_text: '旧TTS', index: 0 },
+          { id: 'old2', speaker: 'hiro', display_text: '旧文本2', tts_text: '旧TTS2', index: 1 },
+        ],
+        phase: 'idle', selectedLineId: null, playingLineId: null,
+        editedText: {}, activeTab: 'review',
+      },
+      game: { gameRoles: {}, presentRoleIds: [] },
+    }
+    const file = new File([JSON.stringify(v1Env)], 'v1.json')
+    const result = await importSession(file)
+    expect(result.ok).toBe(true)
+    expect(store.lines).toHaveLength(2)
+    // v2 fields filled with null defaults for v1 snapshots.
+    expect(store.lines[0].audio_path).toBeNull()
+    expect(store.lines[0].overlay).toBeNull()
+    expect(store.lines[0].stage_id).toBe('')
+    expect(store.lines[1].audio_path).toBeNull()
+  })
+
+  it('round-trip preserves replay extensions (audio_path/overlay/stage_id)', async () => {
+    const store = setIdle()
+    const overlay = {
+      line_id: 'r1', character_id: 1, ref_audio_path: null, gsv_params: null,
+      sprite_positions: { ema: { x: 30, y: 60, scale: 1.2 } },
+      background: 'bg_night.webp', text_overlays: [{ id: 't1', text: '标题', x: 50, y: 10, width: 0, font_size: 24, color: '#fff', opacity: 1, z: 0 }],
+      image_overlays: [], bgm: 'bgm.mp3', bgm_volume: 0.8, bgm_loop: true,
+    }
+    store.addLine(makeLine('r1', 0, { audio_path: '/audio/r1.wav', overlay, stage_id: 's1' }))
+    store.setPhase('paused')
+
+    const cap = setupDownloadCapture()
+    let env: any
+    try {
+      exportSession()
+      env = await blobToJson(cap.getCapturedBlob()!)
+    } finally {
+      cap.restore()
+    }
+
+    // Export carries the replay extensions.
+    expect(env.script.lines[0].audio_path).toBe('/audio/r1.wav')
+    expect(env.script.lines[0].overlay).toMatchObject({ background: 'bg_night.webp' })
+    expect(env.script.lines[0].stage_id).toBe('s1')
+
+    // Import restores them.
+    store.reset()
+    const file = new File([JSON.stringify(env)], 'v2.json')
+    const result = await importSession(file)
+    expect(result.ok).toBe(true)
+    expect(store.lines[0].audio_path).toBe('/audio/r1.wav')
+    expect(store.lines[0].overlay).toMatchObject({ background: 'bg_night.webp' })
+    expect(store.lines[0].stage_id).toBe('s1')
+  })
+
+  it('rejects unsupported version 999', async () => {
+    setIdle()
+    const file = new File([JSON.stringify({ version: 999, script: { lines: [] } })], 'v999.json')
+    const result = await importSession(file)
+    expect(result.ok).toBe(false)
+    expect(result.error).toContain('不支持')
+  })
 })
 
 describe('AC-4 performance', () => {
@@ -431,6 +502,7 @@ describe('AC-4 performance', () => {
       id: `l${i}`, speaker: 'ema', index: i,
       display_text: '一二三四五六七八九十'.repeat(5), // 50 chars
       tts_text: `TTS${i}`, emotion: '开心',
+      audio_path: null, overlay: null, stage_id: '',
     }))
   }
 

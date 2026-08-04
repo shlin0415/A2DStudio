@@ -3,7 +3,10 @@ import { useGameStore } from '@/stores/modules/game'
 import type { GameSnapshot } from '@/stores/modules/game/state'
 
 /** Single source of truth for the snapshot format version this build can read. */
-export const SNAPSHOT_VERSION = 1
+export const SNAPSHOT_VERSION = 2
+
+/** All historically-supported versions (for backward-compatible import). */
+const SUPPORTED_VERSIONS = new Set([1, 2])
 
 /** Phases during which import is permitted (backend is not actively pushing). */
 const IMPORTABLE_PHASES = new Set(['idle', 'paused'])
@@ -76,7 +79,11 @@ export function exportSession() {
   triggerDownload(blob, `save-${stamp()}.a2d.json`)
 }
 
-/** Is this a minimally-plausible ScriptLine (must have the fields the UI reads)? */
+/**
+ * Is this a minimally-plausible ScriptLine (must have the fields the UI reads)?
+ * audio_path / overlay / stage_id are OPTIONAL (v1 saves lack them) — replay
+ * degrades gracefully to null when absent. Only the core UI fields are required.
+ */
 function isScriptLine(v: unknown): v is { id: string; speaker: string; display_text: string; tts_text: string; index: number } {
   if (typeof v !== 'object' || v === null) return false
   const o = v as Record<string, unknown>
@@ -94,11 +101,11 @@ export function validateEnvelope(raw: unknown): ImportResult {
   if (typeof env.version !== 'number' || !Number.isFinite(env.version)) {
     return { ok: false, error: '缺少 version 字段' }
   }
-  if (env.version > SNAPSHOT_VERSION) {
-    return { ok: false, error: `不支持的版本: v${env.version}（当前支持 v${SNAPSHOT_VERSION}）` }
-  }
   if (env.version < 1) {
     return { ok: false, error: `无效的版本号: ${env.version}` }
+  }
+  if (!SUPPORTED_VERSIONS.has(env.version)) {
+    return { ok: false, error: `不支持的版本: v${env.version}（当前支持 v${[...SUPPORTED_VERSIONS].sort().join('/')}）` }
   }
   const script = (env as unknown as ExportEnvelope).script
   if (!script || !Array.isArray(script.lines)) {

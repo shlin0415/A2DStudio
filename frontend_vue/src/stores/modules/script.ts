@@ -4,6 +4,46 @@ import { emitTrace } from '@/utils/a2d-trace'
 
 // ── Types ──────────────────────────────────────────
 
+/** Screen text overlay with percentage coordinates (0-100). Mirrors backend TextOverlay. */
+export interface TextOverlay {
+  id: string
+  text: string
+  x: number
+  y: number
+  width: number
+  font_size: number
+  color: string
+  opacity: number
+  z: number
+}
+
+/** Image overlay layer. Mirrors backend image_overlay dict shape. */
+export interface ImageOverlay {
+  id: string
+  path: string
+  x: number
+  y: number
+  w: number
+  h: number
+  opacity: number
+  z: number
+}
+
+/** Per-line visual state. Mirrors backend LineOverlay (ling_chat/schemas/script_overlay.py). */
+export interface LineOverlay {
+  line_id: string
+  character_id: number
+  ref_audio_path: string | null
+  gsv_params: Record<string, unknown> | null
+  sprite_positions: Record<string, { x: number; y: number; scale: number }> | null
+  background: string | null
+  text_overlays: TextOverlay[]
+  image_overlays: ImageOverlay[]
+  bgm: string
+  bgm_volume: number
+  bgm_loop: boolean
+}
+
 export interface ScriptLine {
   id: string
   speaker: 'ema' | 'hiro' | 'narrator'
@@ -14,6 +54,10 @@ export interface ScriptLine {
   index: number
   batch_index?: number
   batch_total?: number
+  // ── P1 replay extensions (mirror backend ScriptLine) ──
+  audio_path: string | null
+  overlay: LineOverlay | null
+  stage_id: string
 }
 
 export interface ErrorInfo {
@@ -148,7 +192,13 @@ export const useScriptStore = defineStore('script', () => {
    * selectedLineId is silently dropped if it no longer exists in the imported lines.
    */
   function importFromSnapshot(snap: ScriptSnapshot) {
-    lines.value = snap.lines
+    // v1→v2 compat: old snapshots lack audio_path/overlay/stage_id — fill null defaults.
+    lines.value = snap.lines.map(l => ({
+      ...l,
+      audio_path: l.audio_path ?? null,
+      overlay: l.overlay ?? null,
+      stage_id: l.stage_id ?? '',
+    }))
     editedText.value = snap.editedText || {}
     activeTab.value = snap.activeTab || 'review'
     // Both IDs must reference an existing line or be null — otherwise UI indicators dangle.
