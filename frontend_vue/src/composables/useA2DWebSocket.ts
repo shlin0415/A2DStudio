@@ -179,6 +179,25 @@ async function playNextInQueue(
   })
 }
 
+// ── Audio element control (for replay transport) ────
+/** Pause the currently playing audio element (if any). */
+export function pauseCurrentAudio(): void {
+  if (mainAudio && !mainAudio.paused) mainAudio.pause()
+}
+
+/** Stop + reset the currently playing audio element. */
+export function stopCurrentAudio(): void {
+  if (mainAudio) {
+    mainAudio.pause()
+    mainAudio.currentTime = 0
+  }
+}
+
+/** Resume playback on the existing audio element. */
+export function mainAudioPlay(): void {
+  if (mainAudio) mainAudio.play().catch(() => { /* autoplay blocked */ })
+}
+
 export function useA2DWebSocket() {
   const store = useScriptStore()
   const WS_URL = `ws://${window.location.hostname}:8765/ws`

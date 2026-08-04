@@ -9,6 +9,9 @@ import { audioQueue } from '@/composables/audio-queue'
 vi.mock('@/composables/useA2DWebSocket', () => ({
   playNextInQueue: vi.fn(),
   setReplayActive: vi.fn(),
+  pauseCurrentAudio: vi.fn(),
+  stopCurrentAudio: vi.fn(),
+  mainAudioPlay: vi.fn(),
 }))
 
 beforeEach(() => {

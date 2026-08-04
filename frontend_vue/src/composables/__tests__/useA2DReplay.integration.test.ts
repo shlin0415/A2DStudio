@@ -5,6 +5,7 @@ import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest'
 import { setActivePinia, createPinia } from 'pinia'
 import { useScriptStore, type ScriptLine } from '@/stores/modules/script'
 import { audioQueue } from '@/composables/audio-queue'
+import { useA2DReplay, _resetReplaySingleton } from '@/composables/useA2DReplay'
 
 describe('playNextInQueue callback threading (B1/B2 fix)', () => {
   beforeEach(() => {
@@ -76,6 +77,52 @@ describe('playNextInQueue callback threading (B1/B2 fix)', () => {
       expect(endedCount.n).toBe(3)
       // Queue drained.
       expect(audioQueue.value.length).toBe(0)
+    } finally {
+      vi.restoreAllMocks()
+    }
+  })
+
+  // MG3: engine-level B2 test — drives the REAL useA2DReplay engine and verifies
+  // natural-end -> state='idle' + replayActive=false.
+  it('engine: natural end returns to idle and resets replayActive (B2)', async () => {
+    const onendedHandlers: Array<() => void> = []
+    class FakeAudio {
+      src = ''; muted = false; currentTime = 0
+      onerror: (() => void) | null = null
+      load() {}
+      play() { return Promise.resolve() }
+      pause() {}
+      set onended(fn: () => void) { onendedHandlers.push(fn) }
+      get onended() { return null }
+    }
+    // @ts-expect-error override Audio constructor
+    globalThis.Audio = FakeAudio
+    const origSetTimeout = global.setTimeout
+    vi.spyOn(global, 'setTimeout').mockImplementation((fn: () => void) => {
+      if (typeof fn === 'function') fn()
+      return 0 as unknown as ReturnType<typeof setTimeout>
+    })
+
+    try {
+      const store = useScriptStore()
+      store.addLine(makeLine('p1', 0, { display_text: '第一行' }))
+      store.addLine(makeLine('p2', 1, { display_text: '第二行' }))
+
+      _resetReplaySingleton()
+      const replay = useA2DReplay()
+      replay.start(0)
+      expect(replay.state.value).toBe('playing')
+
+      // Fire onended for each item -> engine advances via onEnded->advance().
+      for (let i = 0; i < 2; i++) {
+        await new Promise(r => origSetTimeout(r, 5))
+        if (onendedHandlers[i]) onendedHandlers[i]()
+      }
+      await new Promise(r => origSetTimeout(r, 5))
+
+      // B2: natural end -> state='idle' + playingLineId cleared (stop() called).
+      expect(replay.state.value).toBe('idle')
+      expect(store.playingLineId).toBeNull()
     } finally {
       vi.restoreAllMocks()
     }

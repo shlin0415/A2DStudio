@@ -2,7 +2,7 @@ import { ref, computed, watch, type Ref } from 'vue'
 import { useScriptStore } from '@/stores/modules/script'
 import { useGameStore } from '@/stores/modules/game'
 import { audioQueue, isAudioPlaying } from '@/composables/audio-queue'
-import { playNextInQueue, setReplayActive } from '@/composables/useA2DWebSocket'
+import { playNextInQueue, setReplayActive, pauseCurrentAudio, stopCurrentAudio, mainAudioPlay } from '@/composables/useA2DWebSocket'
 import { resolveVisual } from '@/composables/overlay-resolve'
 import type { ResolvedLineVisual } from '@/composables/types'
 import type { ReplayState } from '@/composables/types'
@@ -120,18 +120,24 @@ export function useA2DReplay() {
   function pause() {
     if (state.value !== 'playing') return
     state.value = 'paused'
+    pauseCurrentAudio() // B3: actually pause the audio element
   }
 
   function resume() {
     if (state.value !== 'paused') return
     state.value = 'playing'
-    if (!isAudioPlaying.value) playNextInQueue(scriptStore, onItemStart, onEnded)
+    if (!isAudioPlaying.value) {
+      playNextInQueue(scriptStore, onItemStart, onEnded)
+    } else {
+      mainAudioPlay() // B3: resume the paused audio element
+    }
   }
 
   function seek(index: number) {
     if (index < 0 || index >= replayLines.value.length) return
     const prevState = state.value
     state.value = 'seeking'
+    stopCurrentAudio() // B4: pause active audio before switching (prevents overlap)
     audioQueue.value.length = 0
     const line = replayLines.value[index]
     if (!line) { state.value = prevState; return }
@@ -144,9 +150,15 @@ export function useA2DReplay() {
 
   function stop() {
     state.value = 'idle'
+    stopCurrentAudio() // B4: pause active audio
     audioQueue.value.length = 0
     currentSubtitle.value = ''
     scriptStore.playingLineId = null
+    // MG2: reset emotion to idle for all roles (AC-3 negative test).
+    for (const role of Object.values(gameStore.gameRoles)) {
+      role.emotion = '正常'
+      role.originalEmotion = '正常'
+    }
     setReplayActive(false)
   }
 
