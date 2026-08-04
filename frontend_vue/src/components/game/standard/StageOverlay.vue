@@ -8,11 +8,44 @@
     - Input: pre-resolved ResolvedLineVisual (engine runs line>stage>global priority chain)
     - Output: overlay-change event (editable mode only)
     - NEVER contains contenteditable (editing is P4-only)
-    - NEVER owns audio (audio lives in useA2DWebSocket queue)
+    - NEVER owns audio or sprite positioning (sprites via GameRoleAvatar props, BGM via useA2DBGM)
 -->
 <template>
   <div class="stage-overlay">
-    <!-- P1 skeleton: rendering slots filled in M3. -->
+    <!-- Background layer (resolved path from priority chain). -->
+    <div
+      v-if="visual?.background"
+      class="stage-overlay__background"
+      :style="{ backgroundImage: `url(${visual.background})` }"
+    />
+
+    <!-- Image overlays (static — non-editable in P1). -->
+    <img
+      v-for="img in visual?.imageOverlays ?? []"
+      :key="img.id"
+      :src="img.path"
+      class="stage-overlay__image"
+      :style="{
+        left: img.x + '%', top: img.y + '%',
+        width: img.w + 'px', height: img.h + 'px',
+        opacity: img.opacity, zIndex: img.z,
+      }"
+      alt=""
+    />
+
+    <!-- Screen text overlays (static — non-editable in P1). -->
+    <div
+      v-for="t in visual?.textOverlays ?? []"
+      :key="t.id"
+      class="stage-overlay__text"
+      :style="{
+        left: t.x + '%', top: t.y + '%',
+        width: t.width ? t.width + 'px' : 'auto',
+        fontSize: t.fontSize + 'px',
+        color: t.color, opacity: t.opacity,
+        zIndex: t.z,
+      }"
+    >{{ t.text }}</div>
   </div>
 </template>
 
@@ -43,5 +76,24 @@ const emit = defineEmits<{
   pointer-events: none;
   overflow: hidden;
   z-index: 15;
+}
+
+.stage-overlay__background {
+  position: absolute;
+  inset: 0;
+  background-size: cover;
+  background-position: center;
+}
+
+.stage-overlay__image {
+  position: absolute;
+  transform: translate(-50%, -50%);
+}
+
+.stage-overlay__text {
+  position: absolute;
+  transform: translate(-50%, -50%);
+  white-space: nowrap;
+  text-align: center;
 }
 </style>

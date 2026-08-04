@@ -87,9 +87,35 @@ export function exportSession() {
 function isScriptLine(v: unknown): v is { id: string; speaker: string; display_text: string; tts_text: string; index: number } {
   if (typeof v !== 'object' || v === null) return false
   const o = v as Record<string, unknown>
+  // audio_path is optional (v1 saves lack it) — but if present, MUST be string.
+  if (o.audio_path != null && typeof o.audio_path !== 'string') return false
   return typeof o.id === 'string' && typeof o.speaker === 'string'
     && typeof o.display_text === 'string' && typeof o.tts_text === 'string'
     && typeof o.index === 'number'
+}
+
+/** Validate a single image_overlay entry has all required fields. */
+function isValidImageOverlay(v: unknown): boolean {
+  if (typeof v !== 'object' || v === null) return false
+  const o = v as Record<string, unknown>
+  return typeof o.path === 'string' && typeof o.x === 'number' && typeof o.y === 'number'
+    && typeof o.w === 'number' && typeof o.h === 'number'
+    && typeof o.opacity === 'number' && typeof o.z === 'number'
+}
+
+/** Validate overlay shape — guards against malformed overlay objects. */
+function validateOverlayShape(overlay: unknown): boolean {
+  if (overlay == null) return true // optional
+  if (typeof overlay !== 'object') return false
+  const o = overlay as Record<string, unknown>
+  if (o.background != null && typeof o.background !== 'string') return false
+  if (o.bgm != null && typeof o.bgm !== 'string') return false
+  if (Array.isArray(o.image_overlays)) {
+    for (let i = 0; i < o.image_overlays.length; i++) {
+      if (!isValidImageOverlay(o.image_overlays[i])) return false
+    }
+  }
+  return true
 }
 
 /** Minimal structural validation — guards against garbage input before we touch the store. */
@@ -113,8 +139,13 @@ export function validateEnvelope(raw: unknown): ImportResult {
   }
   // Every line must carry the fields the UI reads — otherwise import crashes downstream.
   for (let i = 0; i < script.lines.length; i++) {
+    const line = script.lines[i] as unknown as Record<string, unknown>
     if (!isScriptLine(script.lines[i])) {
       return { ok: false, error: `第 ${i + 1} 行结构不完整（缺 id/speaker/display_text/tts_text/index）` }
+    }
+    // Overlay (if present) must have valid shape — malformed overlay crashes replay render.
+    if (!validateOverlayShape(line.overlay)) {
+      return { ok: false, error: `第 ${i + 1} 行 overlay 格式非法` }
     }
   }
   return { ok: true }

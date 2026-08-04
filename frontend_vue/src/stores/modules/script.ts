@@ -115,16 +115,25 @@ export const useScriptStore = defineStore('script', () => {
   const isBusy = computed(() => isThinking.value || isTranslating.value || isSynthesizing.value)
 
   function addLine(line: ScriptLine) {
-    lines.value.push(line)
-    currentLine.value = line
+    // Normalize: WS script_line payload carries only core fields (audio_path arrives
+    // via tts_ready, overlay/stage_id via later flow). Fill defaults so every element
+    // in lines[] satisfies the ScriptLine contract — replay engine reads these fields.
+    const normalized: ScriptLine = {
+      ...line,
+      audio_path: line.audio_path ?? null,
+      overlay: line.overlay ?? null,
+      stage_id: line.stage_id ?? '',
+    }
+    lines.value.push(normalized)
+    currentLine.value = normalized
     emitTrace('script_line', {
-      lineId: line.id, speaker: line.speaker, index: line.index,
-      batch_index: line.batch_index, batch_total: line.batch_total,
+      lineId: normalized.id, speaker: normalized.speaker, index: normalized.index,
+      batch_index: normalized.batch_index, batch_total: normalized.batch_total,
     })
-    emitTrace('currentLine', { lineId: line.id, index: line.index })
+    emitTrace('currentLine', { lineId: normalized.id, index: normalized.index })
     // Track batch progress (undefined = single-line or legacy)
-    if (line.batch_index != null) batchIndex.value = line.batch_index
-    if (line.batch_total != null) batchTotal.value = line.batch_total
+    if (normalized.batch_index != null) batchIndex.value = normalized.batch_index
+    if (normalized.batch_total != null) batchTotal.value = normalized.batch_total
   }
 
   function setPhase(newPhase: Phase) {

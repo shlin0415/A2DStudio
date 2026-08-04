@@ -5,18 +5,31 @@
     <GameRolesStage />
     <GameDialog />
 
+    <!-- P1 replay overlay: renders per-line visual (background/text/image). -->
+    <StageOverlay :visual="currentVisual" />
+
     <!-- A2D overlay: script editor panel at bottom -->
     <ScriptPanel />
   </div>
 </template>
 
 <script setup lang="ts">
-import { GameBackground, GameRolesStage, GameDialog } from '@/components/game/standard'
+import { computed } from 'vue'
+import { GameBackground, GameRolesStage, GameDialog, StageOverlay } from '@/components/game/standard'
 import ScriptPanel from '@/components/game/ScriptPanel.vue'
 import { useA2DWebSocket } from '@/composables/useA2DWebSocket'
+import { useScriptStore } from '@/stores/modules/script'
+import { resolveVisual } from '@/composables/overlay-resolve'
 
 // WS lifecycle: auto-connect on mount, singleton shared with child components
 useA2DWebSocket()
+
+// P1: derive visual from selected line (M3 replay engine will drive from playingLineId).
+const scriptStore = useScriptStore()
+const currentVisual = computed(() => {
+  const line = scriptStore.selectedLine
+  return resolveVisual(line)
+})
 </script>
 
 <style scoped>

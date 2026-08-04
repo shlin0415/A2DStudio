@@ -494,6 +494,64 @@ describe('importSession', () => {
     expect(result.ok).toBe(false)
     expect(result.error).toContain('不支持')
   })
+
+  it('AC-1 negative: rejects line with non-string audio_path', async () => {
+    setIdle()
+    const env = {
+      version: 2,
+      script: {
+        version: 2, exportedAt: '',
+        lines: [{ id: 'bad', speaker: 'ema', display_text: 't', tts_text: 't', index: 0, audio_path: 123 }],
+        phase: 'idle', selectedLineId: null, playingLineId: null,
+        editedText: {}, activeTab: 'review' as const,
+      },
+      game: { gameRoles: {}, presentRoleIds: [] },
+    }
+    const result = await importSession(new File([JSON.stringify(env)], 'bad.json'))
+    expect(result.ok).toBe(false)
+    expect(result.error).toContain('结构不完整')
+  })
+
+  it('AC-1 negative: rejects line with malformed overlay image_overlays', async () => {
+    setIdle()
+    const env = {
+      version: 2,
+      script: {
+        version: 2, exportedAt: '',
+        lines: [{
+          id: 'o1', speaker: 'ema', display_text: 't', tts_text: 't', index: 0,
+          audio_path: null, stage_id: '',
+          overlay: { image_overlays: [{ path: 'x.png' /* missing x/y/w/h/opacity/z */ }] },
+        }],
+        phase: 'idle', selectedLineId: null, playingLineId: null,
+        editedText: {}, activeTab: 'review' as const,
+      },
+      game: { gameRoles: {}, presentRoleIds: [] },
+    }
+    const result = await importSession(new File([JSON.stringify(env)], 'bad.json'))
+    expect(result.ok).toBe(false)
+    expect(result.error).toContain('overlay')
+  })
+})
+
+describe('addLine normalization (WS payload)', () => {
+  it('fills null defaults for missing replay extensions', () => {
+    const store = setIdle()
+    // Simulate WS script_line payload: only core fields (no audio_path/overlay/stage_id).
+    const wsPayload = { id: 'w1', speaker: 'ema', display_text: '文本', tts_text: 'TTS', index: 0 }
+    store.addLine(wsPayload as ScriptLine)
+    expect(store.lines[0].audio_path).toBeNull()
+    expect(store.lines[0].overlay).toBeNull()
+    expect(store.lines[0].stage_id).toBe('')
+  })
+
+  it('preserves present replay extensions', () => {
+    const store = setIdle()
+    const line = makeLine('k1', 0, { audio_path: '/audio/k1.wav', stage_id: 's1' })
+    store.addLine(line)
+    expect(store.lines[0].audio_path).toBe('/audio/k1.wav')
+    expect(store.lines[0].stage_id).toBe('s1')
+  })
 })
 
 describe('AC-4 performance', () => {
