@@ -61,6 +61,12 @@ export function useA2DReplay() {
     }
     if (startIndex < 0 || startIndex >= scriptStore.lines.length) return
 
+    // MG-DOUBLEQUEUE: reset any in-flight playback so a restart never
+    // double-queues (AC-6 negative test). Mirror stop()'s queue/audio reset.
+    stopCurrentAudio()
+    audioQueue.value = []
+    isAudioPlaying.value = false
+
     state.value = 'loading'
     error.value = null
     replayLines.value = [...scriptStore.lines]

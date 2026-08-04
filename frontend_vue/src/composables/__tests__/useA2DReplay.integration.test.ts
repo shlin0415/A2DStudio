@@ -247,4 +247,76 @@ describe('playNextInQueue callback threading (B1/B2 fix)', () => {
     expect(gameStore.gameRoles[1].offsetY).toBe(60)
     expect(gameStore.gameRoles[1].scale).toBe(1.2)
   })
+
+  // AC-6 negative: pause→start must not double-queue (MG-DOUBLEQUEUE fix).
+  it('engine: restart after pause does not double-queue (AC-6 negative)', async () => {
+    const { audioQueue } = await import('@/composables/audio-queue')
+    class FakeAudio {
+      src = ''; muted = false; currentTime = 0
+      onended: (() => void) | null = null
+      onerror: (() => void) | null = null
+      load() {}
+      play() { return Promise.resolve() }
+      pause() {}
+    }
+    // @ts-expect-error override Audio constructor
+    globalThis.Audio = FakeAudio
+    vi.spyOn(global, 'setTimeout').mockImplementation((fn: () => void) => {
+      if (typeof fn === 'function') fn()
+      return 0 as unknown as ReturnType<typeof setTimeout>
+    })
+
+    try {
+      const store = useScriptStore()
+      store.addLine(makeLine('d1', 0))
+      store.addLine(makeLine('d2', 1))
+      store.addLine(makeLine('d3', 2))
+
+      _resetReplaySingleton()
+      const replay = useA2DReplay()
+
+      // Start + advance one line.
+      replay.start(0)
+      expect(replay.state.value).toBe('playing')
+      await new Promise(r => setTimeout(r, 10))
+
+      // Pause mid-replay (1 line already dequeued + playing, 2 remain in queue).
+      replay.pause()
+      const queueAfterPause = audioQueue.value.length // expect 2
+
+      // AC-6 negative: restart must clear old queue + re-enqueue fresh,
+      // NOT append duplicates on top of the paused remainder.
+      replay.start(0)
+      expect(replay.state.value).toBe('playing')
+      // After restart: 3 re-enqueued, 1 dequeued by playNextInQueue = 2 remain.
+      // WITHOUT the fix, restart appends 3 onto the existing 2 = 5 (then -1 = 4).
+      expect(audioQueue.value.length).toBe(2)
+      // Most importantly: no duplicates — restart queue equals paused queue size.
+      expect(audioQueue.value.length).toBe(queueAfterPause)
+    } finally {
+      vi.restoreAllMocks()
+    }
+  })
+
+  // AC-2 negative: empty script → idle + error (no crash).
+  it('engine: empty script start returns idle with error (AC-2 negative)', () => {
+    const store = useScriptStore()
+    store.reset()
+    _resetReplaySingleton()
+    const replay = useA2DReplay()
+    replay.start(0)
+    expect(replay.state.value).toBe('idle')
+    expect(replay.error.value).toBe('无内容可重播')
+  })
+
+  // AC-2 negative: out-of-range index → no-op.
+  it('engine: out-of-range start index is a no-op (AC-2 negative)', () => {
+    const store = useScriptStore()
+    store.addLine(makeLine('o1', 0))
+    _resetReplaySingleton()
+    const replay = useA2DReplay()
+    replay.start(5) // beyond lines.length
+    expect(replay.state.value).toBe('idle')
+    expect(store.playingLineId).toBeNull()
+  })
 })

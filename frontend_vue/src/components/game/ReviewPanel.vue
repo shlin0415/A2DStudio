@@ -33,6 +33,8 @@
           <button class="btn-icon" @click="replayResume" title="继续" :disabled="!replay.isPaused.value">&#x25B6;</button>
           <button class="btn-icon" @click="replayStop" title="停止">&#x25A0;</button>
         </div>
+        <!-- P1 replay error (AC-2 negative: UI shows error on empty script) -->
+        <span v-if="replay.error.value" class="replay-error">{{ replay.error.value }}</span>
         <textarea
           v-model="editingText"
           class="text-editor"
