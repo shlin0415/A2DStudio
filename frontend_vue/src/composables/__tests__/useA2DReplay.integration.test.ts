@@ -7,6 +7,7 @@ import { useScriptStore, type ScriptLine } from '@/stores/modules/script'
 import { useGameStore } from '@/stores/modules/game'
 import { audioQueue } from '@/composables/audio-queue'
 import { useA2DReplay, _resetReplaySingleton } from '@/composables/useA2DReplay'
+import { getCurrentBGM, playBGM, stopBGM } from '@/composables/useA2DBGM'
 
 describe('playNextInQueue callback threading (B1/B2 fix)', () => {
   beforeEach(() => {
@@ -129,6 +130,8 @@ describe('playNextInQueue callback threading (B1/B2 fix)', () => {
       // B2: natural end -> state='idle' + playingLineId cleared (stop() called).
       expect(replay.state.value).toBe('idle')
       expect(store.playingLineId).toBeNull()
+      // AC-3 negative: subtitle cleared at replay end.
+      expect(replay.currentSubtitle.value).toBe('')
       // AC-3 negative: emotion returns to idle for all roles (MG2 stop() reset).
       for (const role of Object.values(useGameStore().gameRoles)) {
         expect(role.emotion).toBe('正常')
@@ -327,5 +330,73 @@ describe('playNextInQueue callback threading (B1/B2 fix)', () => {
     replay.start(5) // beyond lines.length
     expect(replay.state.value).toBe('idle')
     expect(store.playingLineId).toBeNull()
+  })
+
+  // AC-4 positive: BGM switches when line has overlay.bgm.
+  it('engine: applyBGM plays bgm when line has overlay.bgm (AC-4 positive)', () => {
+    const store = useScriptStore()
+    const line: ScriptLine = {
+      id: 'bg1', speaker: 'ema', display_text: 't', tts_text: 't', index: 0,
+      audio_path: '/audio/bg1.wav', stage_id: '',
+      overlay: { bgm: 'bgm.mp3', bgm_volume: 0.5, bgm_loop: true } as any,
+    }
+    store.lines.push(line as any)
+    _resetReplaySingleton()
+    const replay = useA2DReplay()
+    replay.start(0)
+    // After start, applyBGM should have played the bgm.
+    expect(getCurrentBGM()).toBe('bgm.mp3')
+  })
+
+  // AC-4 negative: empty bgm stops playback.
+  it('engine: applyBGM stops bgm when line has no bgm (AC-4 negative)', () => {
+    const store = useScriptStore()
+    // First play a bgm directly.
+    playBGM('existing.mp3')
+    expect(getCurrentBGM()).toBe('existing.mp3')
+    // Now start replay with a line that has no bgm.
+    const line: ScriptLine = {
+      id: 'nb1', speaker: 'ema', display_text: 't', tts_text: 't', index: 0,
+      audio_path: '/audio/nb1.wav', stage_id: '', overlay: null,
+    }
+    store.lines.push(line as any)
+    _resetReplaySingleton()
+    const replay = useA2DReplay()
+    replay.start(0)
+    expect(getCurrentBGM()).toBe('')
+  })
+
+  // AC-5 positive: toast fires when pendingLiveQueue drains on replay end.
+  it('engine: toast fires with count when live TTS queued during replay (AC-5 positive)', async () => {
+    const { pendingLiveQueue, isAudioPlaying } = await import('@/composables/audio-queue')
+    const { setReplayActive } = await import('@/composables/useA2DWebSocket')
+    const uiStore = (await import('@/stores/modules/ui/ui')).useUIStore()
+    const showInfoSpy = vi.spyOn(uiStore, 'showInfo')
+
+    // Simulate live TTS arriving mid-replay: queued into pendingLiveQueue.
+    pendingLiveQueue.value = [{ url: '/audio/live1.wav', lineId: 'live1' }, { url: '/audio/live2.wav', lineId: 'live2' }]
+
+    // Simulate replay end: isAudioPlaying false -> drain triggers.
+    isAudioPlaying.value = false
+    setReplayActive(false)
+
+    expect(showInfoSpy).toHaveBeenCalledWith(expect.objectContaining({ message: expect.stringContaining('2') }))
+    showInfoSpy.mockRestore()
+  })
+
+  // AC-5 negative: live TTS arriving mid-replay does NOT interrupt replay audio.
+  it('engine: live TTS mid-replay routes to pending queue, not active queue (AC-5 negative)', async () => {
+    const { pendingLiveQueue, audioQueue } = await import('@/composables/audio-queue')
+    const store = useScriptStore()
+    store.addLine(makeLine('r1', 0))
+    _resetReplaySingleton()
+    const replay = useA2DReplay()
+    replay.start(0)
+    const activeQueueLen = audioQueue.value.length
+
+    // Live TTS arrives while replay active -> pendingLiveQueue, NOT audioQueue.
+    pendingLiveQueue.value = [{ url: '/audio/interrupt.wav', lineId: 'intrude' }]
+    expect(audioQueue.value.length).toBe(activeQueueLen) // active queue untouched
+    expect(pendingLiveQueue.value.length).toBe(1) // deferred
   })
 })

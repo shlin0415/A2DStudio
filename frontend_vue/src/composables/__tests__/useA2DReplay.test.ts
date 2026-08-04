@@ -4,6 +4,7 @@ import { useScriptStore, type ScriptLine } from '@/stores/modules/script'
 import { useGameStore } from '@/stores/modules/game'
 import { useA2DReplay, _resetReplaySingleton } from '@/composables/useA2DReplay'
 import { audioQueue } from '@/composables/audio-queue'
+import { getCurrentBGM } from '@/composables/useA2DBGM'
 
 // Mock useA2DWebSocket so playNextInQueue doesn't touch real audio.
 vi.mock('@/composables/useA2DWebSocket', () => ({
@@ -139,6 +140,41 @@ describe('useA2DReplay state machine', () => {
     replay.seek(2)
     expect(store.playingLineId).toBe('c')
     expect(replay.currentIndex.value).toBe(2)
+  })
+
+  // AC-7: all lines missing audio -> idle + error (finite guard).
+  it('AC-7 negative: all-missing-audio returns idle with error', () => {
+    const store = useScriptStore()
+    store.addLine(makeLine('m1', 0, { audio_path: null }))
+    store.addLine(makeLine('m2', 1, { audio_path: null }))
+    const replay = useA2DReplay()
+    replay.start(0)
+    expect(replay.state.value).toBe('idle')
+    expect(replay.error.value).toBe('所有行均缺失音频')
+  })
+
+  // AC-7: missing line doesn't block subsequent normal line.
+  it('AC-7 positive: missing audio line skipped, normal line plays', () => {
+    const store = useScriptStore()
+    store.addLine(makeLine('x1', 0, { audio_path: null })) // missing
+    store.addLine(makeLine('x2', 1)) // has audio
+    const replay = useA2DReplay()
+    replay.start(0)
+    expect(replay.state.value).toBe('playing')
+    // Queue should contain only x2 (x1 skipped).
+    expect(audioQueue.value.length).toBe(1)
+    expect(audioQueue.value[0].lineId).toBe('x2')
+  })
+
+  // AC-7: skippedLines counter tracks skipped lines.
+  it('AC-7: skippedLines counter increments for missing audio', () => {
+    const store = useScriptStore()
+    store.addLine(makeLine('s1', 0, { audio_path: null }))
+    store.addLine(makeLine('s2', 1, { audio_path: null }))
+    store.addLine(makeLine('s3', 2)) // has audio
+    const replay = useA2DReplay()
+    replay.start(0)
+    expect(replay.skippedLines.value).toEqual(['s1', 's2'])
   })
 })
 
