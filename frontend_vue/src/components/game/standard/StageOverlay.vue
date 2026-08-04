@@ -12,14 +12,8 @@
 -->
 <template>
   <div class="stage-overlay">
-    <!-- Background layer (resolved path from priority chain). -->
-    <div
-      v-if="visual?.background"
-      class="stage-overlay__background"
-      :style="{ backgroundImage: `url(${visual.background})` }"
-    />
-
-    <!-- Image overlays (static — non-editable in P1). -->
+    <!-- Image overlays (static — non-editable in P1). z-index:15 is correct for
+         overlay layers (above GameRolesStage, below GameDialog). -->
     <img
       v-for="img in visual?.imageOverlays ?? []"
       :key="img.id"
@@ -76,13 +70,6 @@ const emit = defineEmits<{
   pointer-events: none;
   overflow: hidden;
   z-index: 15;
-}
-
-.stage-overlay__background {
-  position: absolute;
-  inset: 0;
-  background-size: cover;
-  background-position: center;
 }
 
 .stage-overlay__image {
