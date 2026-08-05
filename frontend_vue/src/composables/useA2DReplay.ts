@@ -95,12 +95,10 @@ export function useA2DReplay() {
 
   /** Enqueue audio items from startIndex onward. */
   function enqueueFromIndex(startIndex: number) {
-    for (let i = startIndex; i < replayLines.value.length; i++) {
-      const line = replayLines.value[i]
-      if (!line) break
+    for (const line of replayLines.value.slice(startIndex)) {
       if (!line.audio_path) {
         // AC-7: track skipped lines for UI hint.
-        if (_skippedLines) _skippedLines.value.push(line.id)
+        skippedLines.value.push(line.id)
         continue
       }
       const url = line.audio_path.startsWith('/')
@@ -113,12 +111,17 @@ export function useA2DReplay() {
     }
   }
 
-  /** Replay engine hook: sync subtitle + emotion + sprites + BGM when an audio item starts. */
-  function onItemStart(line: ScriptLine) {
+  /** Sync subtitle + emotion + sprites + BGM for the active line (single source of truth). */
+  function syncVisual(line: ScriptLine): void {
     currentSubtitle.value = line.display_text
     applyEmotion(line)
     applySpritePositions(line)
     applyBGM(line)
+  }
+
+  /** Replay engine hook: sync visual when an audio item starts. */
+  function onItemStart(line: ScriptLine) {
+    syncVisual(line)
   }
 
   /** On each audio end: advance the state machine. Returns false at replay end. */
@@ -126,17 +129,11 @@ export function useA2DReplay() {
     advance()
   }
 
-  // Robust per-line subtitle + emotion + sprite + BGM sync: watch playingLineId
-  // so sync works regardless of callback threading (guards against B1 regression).
+  // Defense-in-depth: re-sync on playingLineId change (guards against B1 callback-thread regression).
   watch(() => scriptStore.playingLineId, (id) => {
     if (!id) return
     const line = scriptStore.lines.find(l => l.id === id)
-    if (line) {
-      currentSubtitle.value = line.display_text
-      applyEmotion(line)
-      applySpritePositions(line)
-      applyBGM(line)
-    }
+    if (line) syncVisual(line)
   })
 
   function pause() {
@@ -165,8 +162,7 @@ export function useA2DReplay() {
     const line = replayLines.value[index]
     if (!line) { state.value = prevState; return }
     scriptStore.playingLineId = line.id
-    currentSubtitle.value = line.display_text
-    applyEmotion(line)
+    syncVisual(line)
     state.value = prevState === 'paused' ? 'paused' : 'playing'
     if (state.value === 'playing') enqueueFromIndex(index)
   }
@@ -196,10 +192,7 @@ export function useA2DReplay() {
     const line = replayLines.value[nextIdx]
     if (!line) { stop(); return false }
     scriptStore.playingLineId = line.id
-    currentSubtitle.value = line.display_text
-    applyEmotion(line)
-    applySpritePositions(line)
-    applyBGM(line)
+    syncVisual(line)
     return true
   }
 

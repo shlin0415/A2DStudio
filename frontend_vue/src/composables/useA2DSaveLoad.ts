@@ -58,6 +58,20 @@ function stamp(): string {
 /**
  * Build a snapshot of the current script + game stores and download it as `<timestamp>.a2d.json`.
  */
+/** Build the script snapshot shared by export + rollback. */
+function buildScriptSnapshot(script: ReturnType<typeof useScriptStore>) {
+  return {
+    version: SNAPSHOT_VERSION,
+    exportedAt: new Date().toISOString(),
+    lines: script.lines,
+    phase: script.phase,
+    selectedLineId: script.selectedLineId,
+    playingLineId: script.playingLineId,
+    editedText: script.editedText,
+    activeTab: script.activeTab,
+  }
+}
+
 export function exportSession() {
   const script = useScriptStore()
   const game = useGameStore()
@@ -65,16 +79,7 @@ export function exportSession() {
   const envelope: ExportEnvelope = {
     version: SNAPSHOT_VERSION,
     exportedAt: new Date().toISOString(),
-    script: {
-      version: SNAPSHOT_VERSION,
-      exportedAt: new Date().toISOString(),
-      lines: script.lines,
-      phase: script.phase,
-      selectedLineId: script.selectedLineId,
-      playingLineId: script.playingLineId,
-      editedText: script.editedText,
-      activeTab: script.activeTab,
-    },
+    script: buildScriptSnapshot(script),
     game: {
       gameRoles: game.gameRoles,
       presentRoleIds: game.presentRoleIds,
@@ -187,16 +192,7 @@ export function captureRollback(): void {
   const script = useScriptStore()
   const game = useGameStore()
   const data: RollbackData = {
-    script: {
-      version: SNAPSHOT_VERSION,
-      exportedAt: new Date().toISOString(),
-      lines: script.lines,
-      phase: script.phase,
-      selectedLineId: script.selectedLineId,
-      playingLineId: script.playingLineId,
-      editedText: script.editedText,
-      activeTab: script.activeTab,
-    },
+    script: buildScriptSnapshot(script),
     game: {
       gameRoles: game.gameRoles,
       presentRoleIds: game.presentRoleIds,

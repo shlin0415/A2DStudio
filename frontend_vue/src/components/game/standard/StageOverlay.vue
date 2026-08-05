@@ -46,20 +46,9 @@
 <script setup lang="ts">
 import type { ResolvedLineVisual } from '@/composables/types'
 
-withDefaults(defineProps<{
+defineProps<{
   visual: ResolvedLineVisual | null
-  editable?: boolean
-  stageSize?: { width: number; height: number }
-}>(), {
-  editable: false,
-  stageSize: () => ({ width: 1920, height: 1080 }),
-})
-
-const emit = defineEmits<{
-  (e: 'overlay-change', visual: ResolvedLineVisual): void
 }>()
-
-// Percentage (0-100) → pixel conversion happens in M3 per-element positioning.
 </script>
 
 <style scoped>
