@@ -156,3 +156,102 @@ class TestEdgeCases:
         assert line is not None
         # No 【emotion】 so emotion is empty, display_text is the raw text
         assert line.emotion == ""
+
+
+# ── Explicit narration marker (旁白：xxx) ────────────────────
+
+
+class TestExplicitNarration:
+    def test_narrator_parses_with_prefix_stripped(self, parser):
+        """旁白：xxx → narrator, display_text without prefix, tts_text = content."""
+        line = parse(parser, "旁白：希罗和艾玛来到了公园")
+        assert line is not None
+        assert line.speaker == "narrator"
+        assert line.emotion == ""
+        assert line.display_text == "希罗和艾玛来到了公园"
+        assert line.tts_text == "希罗和艾玛来到了公园"  # voiceable
+
+    def test_narrator_with_halfwidth_colon(self, parser):
+        """旁白:xxx (halfwidth colon) also recognized."""
+        line = parse(parser, "旁白:夕阳把教室染成橙红色")
+        assert line is not None
+        assert line.speaker == "narrator"
+        assert line.display_text == "夕阳把教室染成橙红色"
+
+    def test_narrator_prefix_not_in_display(self, parser):
+        """Frontend must never see the 旁白： marker."""
+        line = parse(parser, "旁白：窗外下着淅淅沥沥的雨")
+        assert "旁白" not in line.display_text
+        assert "：" not in line.display_text
+
+    def test_narrator_preserves_raw_text(self, parser):
+        """raw_text keeps the full LLM output for KV-cache history."""
+        raw = "旁白：三天后的早晨……"
+        line = parse(parser, raw)
+        assert line.raw_text == raw
+
+    def test_narrator_empty_content_falls_through(self, parser):
+        """旁白： (empty) — falls through to pure-action heuristic, not empty narrator."""
+        line = parse(parser, "旁白：")
+        # Empty content after prefix — should NOT produce a narrator with empty display
+        if line is not None:
+            assert line.display_text != ""  # either None or non-empty display
+
+    def test_narrator_takes_priority_over_pure_action(self, parser):
+        """旁白：（摔门）— explicit marker wins, tts_text = content (voiceable)."""
+        line = parse(parser, "旁白：（摔门）")
+        assert line is not None
+        assert line.speaker == "narrator"
+        # Explicit marker path: tts_text = "（摔门）" (the content after prefix)
+        assert line.tts_text == "（摔门）"
+
+    def test_halfwidth_paren_not_misrecognized(self, parser):
+        """(action) halfwidth — NOT a narration marker, treated as dialogue."""
+        line = parse(parser, "(hello there)")
+        assert line is not None
+        assert line.speaker != "narrator"  # not fullwidth （）, not 旁白： prefix
+
+
+# ── TTS cleaning: strip parenthetical leakage ────────────────
+
+
+class TestTTSCleaning:
+    def test_strip_fullwidth_parens_from_tts(self, parser):
+        """<你够了（摔门）> → tts_text="你够了" (parens stripped, action captured)."""
+        line = parse(parser, "【生气】你够了<你够了（摔门）>")
+        assert line is not None
+        assert line.tts_text == "你够了"
+        assert "摔门" in line.action  # stripped content goes to action field
+
+    def test_strip_halfwidth_parens_from_tts(self, parser):
+        """<hello (angry)> → tts_text="hello"."""
+        line = parse(parser, "【angry】hello<hello (angry)>")
+        assert line is not None
+        assert line.tts_text == "hello"
+        assert "angry" in line.action
+
+    def test_strip_multiple_parens_from_tts(self, parser):
+        """Multiple parentheticals all stripped."""
+        line = parse(parser, "【test】hello<hello (angry) (loud)>")
+        assert line is not None
+        assert line.tts_text == "hello"
+
+    def test_tts_empty_after_strip_retains_original(self, parser):
+        """Safety net: if stripping empties tts_text, retain original."""
+        line = parse(parser, "【test】text<（only parens）>")
+        assert line is not None
+        # Stripping leaves empty → retain original as safety net
+        assert line.tts_text == "（only parens）"
+
+    def test_no_parens_in_tts_unchanged(self, parser):
+        """Clean TTS unchanged."""
+        line = parse(parser, "【happy】hello<hello>")
+        assert line is not None
+        assert line.tts_text == "hello"
+
+    def test_action_field_accumulates_stripped(self, parser):
+        """Existing action + stripped parens merge with 、 separator."""
+        line = parse(parser, "【shy】hi<hi (wave)>（blush）")
+        assert line is not None
+        assert line.tts_text == "hi"
+        assert "wave" in line.action and "blush" in line.action

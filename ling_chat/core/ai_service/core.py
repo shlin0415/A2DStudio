@@ -822,6 +822,24 @@ class AIService:
         if not text:
             return None
 
+        # Explicit narration marker: "旁白：xxx" or "旁白:xxx" (full/half colon).
+        # Priority over pure-（）heuristic. Prefix is stripped from display_text so the
+        # frontend never sees the LLM marker. Non-empty content is voiceable (tts_text
+        # set to content); empty content falls through to the pure-action heuristic below.
+        narration_match = re.match(r"^旁白[：:]\s*(.+)$", text)
+        if narration_match:
+            content = narration_match.group(1).strip()
+            if content:
+                return ScriptLine(
+                    speaker="narrator",
+                    emotion="",
+                    display_text=content,
+                    tts_text=content,  # non-empty = can be voiced via narrator_voice_key
+                    raw_text=text,  # preserve LLM original for KV-cache-friendly history
+                    state="approved",
+                )
+            # Empty after prefix — fall through to pure-action heuristic
+
         # Pure action line: entire content is （...）with no dialogue.
         # LLM sometimes splits actions onto separate lines when batch_size > 1.
         # Treat as narration — no emotion, no TTS.
@@ -852,6 +870,20 @@ class AIService:
         if action_match:
             action = action_match.group(1)
             display_text = re.sub(r"（.+?）$", "", display_text).strip()
+
+        # Defense-in-depth: strip parenthetical action leaked into TTS tag.
+        # LLM sometimes writes "<你够了（摔门）>" — GSV would read the parens aloud.
+        # Strip both fullwidth （）and halfwidth () content. If stripping empties the
+        # text, retain original as safety net (never produce empty TTS from non-empty input).
+        def _clean_tts(src: str) -> tuple[str, str]:
+            cleaned = re.sub(r"[（(][^）)]+[）)]", "", src).strip()
+            actions = re.findall(r"[（(]([^）)]+)[）)]", src)
+            return cleaned, "、".join(actions) if actions else ""
+
+        tts_cleaned, stripped_actions = _clean_tts(tts_text)
+        if stripped_actions:
+            action = (action + "、" + stripped_actions).strip("、") if action else stripped_actions
+        tts_text = tts_cleaned if tts_cleaned else tts_text
 
         if not display_text:
             display_text = text
