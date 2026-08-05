@@ -1,5 +1,6 @@
 import asyncio
 import os
+import re
 from typing import Dict
 
 from ling_chat.core.ai_service.ai_logger import AILogger
@@ -31,7 +32,6 @@ def _clean_tts(src: str) -> tuple[str, str]:
 
     Returns: (cleaned_text, concatenated_actions)
     """
-    import re
     cleaned = re.sub(r"[（(][^）)]+[）)]", "", src).strip()
     actions = re.findall(r"[（(]([^）)]+)[）)]", src)
     return cleaned, "、".join(actions) if actions else ""
@@ -1011,19 +1011,20 @@ class AIService:
         import os
 
         # ── Narrator dispatch: reuse selected character's voice_maker ─
+        effective_speaker = speaker
         if speaker == "narrator":
             vk = self.a2d_session.narrator_voice_key
             if isinstance(vk, str) and vk:
                 cfg = self.a2d_session.characters.get(vk)
                 if cfg and cfg.game_role and cfg.game_role.voice_maker:
-                    speaker = vk  # reuse that character's voice_maker via Path 1 below
+                    effective_speaker = vk  # reuse that character's voice_maker
                 else:
                     return ""  # silent fallback: invalid key or no voice_maker
             else:
                 return ""  # silent fallback: no narrator_voice_key set
 
         # ── Path 1: GameRole.voice_maker (per-character, preferred) ─
-        cfg = self.a2d_session.characters.get(speaker) if speaker else None
+        cfg = self.a2d_session.characters.get(effective_speaker) if effective_speaker else None
         if cfg and cfg.game_role:
             voice_maker = cfg.game_role.voice_maker
             # Ensure GSV adapter is ready
