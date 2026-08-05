@@ -5,13 +5,19 @@
 -->
 <template>
   <div v-if="text" class="subtitle-overlay">
-    <div class="subtitle-overlay__text">{{ text }}</div>
+    <div
+      class="subtitle-overlay__text"
+      :class="{ 'subtitle-overlay__text--narrator': isNarrator }"
+    >
+      {{ text }}
+    </div>
   </div>
 </template>
 
 <script setup lang="ts">
 defineProps<{
   text: string
+  isNarrator?: boolean
 }>()
 </script>
 
@@ -34,5 +40,12 @@ defineProps<{
   font-size: 18px;
   text-align: center;
   white-space: pre-wrap;
+}
+
+.subtitle-overlay__text--narrator {
+  background: transparent;
+  color: #d0d0d0;
+  text-shadow: 0 1px 3px rgba(0, 0, 0, 0.8);
+  font-style: italic;
 }
 </style>

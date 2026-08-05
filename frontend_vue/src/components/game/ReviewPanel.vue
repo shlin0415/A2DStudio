@@ -35,9 +35,12 @@
         </div>
         <!-- P1 replay error (AC-2 negative: UI shows error on empty script) -->
         <span v-if="replay.error.value" class="replay-error">{{ replay.error.value }}</span>
-        <!-- AC-7 positive: hint when lines are skipped due to missing audio -->
-        <span v-if="replay.skippedLines.value.length > 0" class="replay-warning">
-          已跳过 {{ replay.skippedLines.value.length }} 条缺失音频的行
+        <!-- AC-7 positive: hint when lines are skipped due to missing audio vs narrator-silent -->
+        <span v-if="replay.missingAudioLines.value.length > 0" class="replay-warning">
+          已跳过 {{ replay.missingAudioLines.value.length }} 条缺失音频的行
+        </span>
+        <span v-if="replay.silentLines.value.length > 0" class="replay-hint">
+          {{ replay.silentLines.value.length }} 条旁白以纯字幕显示
         </span>
         <textarea
           v-model="editingText"

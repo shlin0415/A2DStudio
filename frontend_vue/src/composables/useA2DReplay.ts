@@ -13,7 +13,38 @@ let _replayLines: Ref<ScriptLine[]> | null = null
 let _currentSubtitle: Ref<string> | null = null
 let _error: Ref<string | null> | null = null
 let _skippedLines: Ref<string[]> | null = null
+let _missingAudioLines: Ref<string[]> | null = null
+let _silentLines: Ref<string[]> | null = null
 let _initialized = false
+
+// ── Subtitle timer state ────────────────────────────────────
+// Drives silent-line (no-audio) progression via a reading-time clock.
+// Arbitration contract: each line advances via exactly one signal —
+// audio lines via onEnded, silent lines via this timer. A state flag
+// (_timerActive) ensures mutual exclusion; pause clears, resume rebuilds.
+let _subtitleTimer: ReturnType<typeof setTimeout> | null = null
+let _timerActive = false
+
+/** Compute subtitle display duration for a silent line (ms). */
+function subtitleDurationMs(text: string): number {
+  // Rate: CJK chars ~40ms each, non-CJK ~25ms. Clamp to [1500, 6000]ms.
+  let cjk = 0
+  let other = 0
+  for (const ch of text) {
+    if (/[一-鿿぀-ゟ゠-ヿ]/.test(ch)) cjk++
+    else other++
+  }
+  const raw = cjk * 40 + other * 25
+  return Math.min(6000, Math.max(1500, raw))
+}
+
+function clearSubtitleTimer(): void {
+  if (_subtitleTimer !== null) {
+    clearTimeout(_subtitleTimer)
+    _subtitleTimer = null
+  }
+  _timerActive = false
+}
 
 function ensureInit() {
   if (_initialized) return
@@ -22,6 +53,8 @@ function ensureInit() {
   _currentSubtitle = ref('')
   _error = ref<string | null>(null)
   _skippedLines = ref<string[]>([])
+  _missingAudioLines = ref<string[]>([])
+  _silentLines = ref<string[]>([])
   _initialized = true
 }
 
@@ -42,6 +75,8 @@ export function useA2DReplay() {
   const currentSubtitle = _currentSubtitle!
   const error = _error!
   const skippedLines = _skippedLines!
+  const missingAudioLines = _missingAudioLines!
+  const silentLines = _silentLines!
 
   // Derived index from playingLineId (single source of truth per deliberation #8).
   const currentIndex = computed(() => {
@@ -62,6 +97,7 @@ export function useA2DReplay() {
     if (startIndex < 0 || startIndex >= scriptStore.lines.length) return
 
     // AC-7: all lines missing audio -> finite idle + error (no stuck playing state).
+    // Voiced narrators (audio_path set via narrator synthesis) count as playable.
     const hasAnyAudio = scriptStore.lines.some(l => l.audio_path)
     if (!hasAnyAudio) {
       error.value = '所有行均缺失音频'
@@ -74,6 +110,8 @@ export function useA2DReplay() {
     audioQueue.value = []
     isAudioPlaying.value = false
     _skippedLines!.value = []
+    _missingAudioLines!.value = []
+    _silentLines!.value = []
 
     state.value = 'loading'
     error.value = null
@@ -93,12 +131,35 @@ export function useA2DReplay() {
     enqueueFromIndex(startIndex)
   }
 
+  /** Advance to the next silent line via subtitle-timer (not audio onEnded). */
+  function advanceOnTimer(line: ScriptLine): void {
+    if (_state!.value === 'paused' || _state!.value === 'idle') return
+    scriptStore.playingLineId = line.id
+    syncVisual(line)
+    _timerActive = true
+    _subtitleTimer = setTimeout(() => {
+      _timerActive = false
+      advance()
+    }, subtitleDurationMs(line.display_text))
+  }
+
   /** Enqueue audio items from startIndex onward. */
   function enqueueFromIndex(startIndex: number) {
-    for (const line of replayLines.value.slice(startIndex)) {
+    const lines = replayLines.value.slice(startIndex)
+    for (const line of lines) {
       if (!line.audio_path) {
-        // AC-7: track skipped lines for UI hint.
+        // Silent line: drive via subtitle-timer, not audio queue.
         skippedLines.value.push(line.id)
+        // Distinguish narrator-silent (speaker=narrator) from truly-missing audio.
+        if (line.speaker === 'narrator') {
+          silentLines.value.push(line.id)
+        } else {
+          missingAudioLines.value.push(line.id)
+        }
+        // If this is the first item (startIndex itself is silent), kick timer now.
+        if (line.id === lines[0]?.id && !_timerActive) {
+          advanceOnTimer(line)
+        }
         continue
       }
       const url = line.audio_path.startsWith('/')
@@ -126,7 +187,14 @@ export function useA2DReplay() {
 
   /** On each audio end: advance the state machine. Returns false at replay end. */
   function onEnded() {
-    advance()
+    // After audio ends, check next line. If silent, start subtitle-timer.
+    const nextIdx = currentIndex.value + 1
+    const nextLine = replayLines.value[nextIdx]
+    if (nextLine && !nextLine.audio_path) {
+      advanceOnTimer(nextLine)
+    } else {
+      advance()
+    }
   }
 
   // Defense-in-depth: re-sync on playingLineId change (guards against B1 callback-thread regression).
@@ -140,13 +208,20 @@ export function useA2DReplay() {
     if (state.value !== 'playing') return
     state.value = 'paused'
     pauseCurrentAudio() // B3: actually pause the audio element
+    clearSubtitleTimer() // Freeze subtitle-timer during pause
   }
 
   function resume() {
     if (state.value !== 'paused') return
     state.value = 'playing'
     if (!isAudioPlaying.value) {
-      playNextInQueue(scriptStore, onItemStart, onEnded)
+      // If current line is silent, rebuild subtitle-timer.
+      const curLine = replayLines.value.find(l => l.id === scriptStore.playingLineId)
+      if (curLine && !curLine.audio_path) {
+        advanceOnTimer(curLine)
+      } else {
+        playNextInQueue(scriptStore, onItemStart, onEnded)
+      }
     } else {
       mainAudioPlay() // B3: resume the paused audio element
     }
@@ -171,6 +246,7 @@ export function useA2DReplay() {
     state.value = 'idle'
     stopCurrentAudio() // B4: pause active audio
     isAudioPlaying.value = false // MG4: reset so a subsequent start() can play
+    clearSubtitleTimer() // Clear any active subtitle-timer
     audioQueue.value.length = 0
     currentSubtitle.value = ''
     scriptStore.playingLineId = null
@@ -244,6 +320,7 @@ export function useA2DReplay() {
 
   return {
     state, currentIndex, currentSubtitle, error, skippedLines,
+    missingAudioLines, silentLines,
     isPlaying, isPaused,
     start, pause, resume, seek, stop, advance,
   }
@@ -255,5 +332,8 @@ export function _resetReplaySingleton() {
   if (_replayLines) _replayLines.value = []
   if (_currentSubtitle) _currentSubtitle.value = ''
   if (_error) _error.value = null
+  if (_missingAudioLines) _missingAudioLines.value = []
+  if (_silentLines) _silentLines.value = []
+  clearSubtitleTimer()
   stopBGM()
 }
