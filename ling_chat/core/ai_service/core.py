@@ -21,6 +21,22 @@ from ling_chat.schemas.character_settings import CharacterSettings
 from ling_chat.utils.function import Function
 
 
+def _clean_tts(src: str) -> tuple[str, str]:
+    """Strip parenthetical action leaked into TTS text.
+
+    LLM sometimes writes "<你够了（摔门）>" — GSV would read the parens aloud.
+    Strip both fullwidth （）and halfwidth () content. If stripping empties the
+    text, caller should retain original as safety net (never produce empty TTS
+    from non-empty input).
+
+    Returns: (cleaned_text, concatenated_actions)
+    """
+    import re
+    cleaned = re.sub(r"[（(][^）)]+[）)]", "", src).strip()
+    actions = re.findall(r"[（(]([^）)]+)[）)]", src)
+    return cleaned, "、".join(actions) if actions else ""
+
+
 class AIService:
     def __init__(self, settings: CharacterSettings):
         """
@@ -860,17 +876,20 @@ class AIService:
 
         # Explicit narration marker: "旁白：xxx" or "旁白:xxx" (full/half colon).
         # Priority over pure-（）heuristic. Prefix is stripped from display_text so the
-        # frontend never sees the LLM marker. Non-empty content is voiceable (tts_text
-        # set to content); empty content falls through to the pure-action heuristic below.
+        # frontend never sees the LLM marker. Content is cleaned via _clean_tts so that
+        # any （action） mixed into the narrator line is NOT read aloud (consistent with
+        # single-line dialogue format behavior).
         narration_match = re.match(r"^旁白[：:]\s*(.+)$", text)
         if narration_match:
             content = narration_match.group(1).strip()
             if content:
+                cleaned_content, stripped_actions = _clean_tts(content)
+                tts_text = cleaned_content if cleaned_content else content
                 return ScriptLine(
                     speaker="narrator",
                     emotion="",
                     display_text=content,
-                    tts_text=content,  # non-empty = can be voiced via narrator_voice_key
+                    tts_text=tts_text,  # cleaned = can be voiced via narrator_voice_key
                     raw_text=text,  # preserve LLM original for KV-cache-friendly history
                     state="approved",
                 )
@@ -909,13 +928,6 @@ class AIService:
 
         # Defense-in-depth: strip parenthetical action leaked into TTS tag.
         # LLM sometimes writes "<你够了（摔门）>" — GSV would read the parens aloud.
-        # Strip both fullwidth （）and halfwidth () content. If stripping empties the
-        # text, retain original as safety net (never produce empty TTS from non-empty input).
-        def _clean_tts(src: str) -> tuple[str, str]:
-            cleaned = re.sub(r"[（(][^）)]+[）)]", "", src).strip()
-            actions = re.findall(r"[（(]([^）)]+)[）)]", src)
-            return cleaned, "、".join(actions) if actions else ""
-
         tts_cleaned, stripped_actions = _clean_tts(tts_text)
         if stripped_actions:
             action = (action + "、" + stripped_actions).strip("、") if action else stripped_actions

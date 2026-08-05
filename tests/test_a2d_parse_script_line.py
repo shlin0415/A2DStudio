@@ -211,6 +211,15 @@ class TestExplicitNarration:
         assert line is not None
         assert line.speaker != "narrator"  # not fullwidth （）, not 旁白： prefix
 
+    def test_narrator_mixed_action_gets_cleaned(self, parser):
+        """旁白：xxx（动作）→ tts_text strips parens, display_text keeps full content."""
+        line = parse(parser, "旁白：夕阳把教室染成橙红色。（远处的门吱呀作响）")
+        assert line is not None
+        assert line.speaker == "narrator"
+        assert line.display_text == "夕阳把教室染成橙红色。（远处的门吱呀作响）"
+        # tts_text should strip the parenthetical action (not read aloud), keep the full stop
+        assert line.tts_text == "夕阳把教室染成橙红色。"
+
 
 # ── TTS cleaning: strip parenthetical leakage ────────────────
 
