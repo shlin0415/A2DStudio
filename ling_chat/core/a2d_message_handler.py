@@ -222,6 +222,20 @@ async def _handle_start(ai_service, client_id: str, payload: dict, send: SendFn)
     if topic:
         session.update_scene(topic, "自由对话", None)
 
+    # Narrator configuration (session-level override)
+    # narration_mode: "merge" (default) | "split". Invalid values fall back to merge.
+    narration_mode = payload.get("narration_mode")
+    if narration_mode in ("merge", "split"):
+        session.narration_mode = narration_mode
+    else:
+        session.narration_mode = "merge"  # default for missing/invalid
+
+    # narrator_voice_key: script_role_key of character whose voice_maker narrator borrows.
+    # Invalid key degrades silently (validated at synthesize time, not here).
+    narrator_voice_key = payload.get("narrator_voice_key")
+    if narrator_voice_key is None or isinstance(narrator_voice_key, str):
+        session.narrator_voice_key = narrator_voice_key if narrator_voice_key else None
+
     # Send character list first so frontend renders sprites before first line
     await _send_a2d_characters(session, send)
 

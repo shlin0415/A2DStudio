@@ -541,16 +541,27 @@ class AIService:
             line = self._a2d_parse_script_line(raw_line, current_speaker)
             if line:
                 if line.speaker == "narrator":
-                    # Pure action line from LLM — merge into previous line's raw_text
-                    script_lines = session.script_lines
-                    if script_lines:
-                        prev = script_lines[-1]
-                        prev.raw_text = (prev.raw_text or "") + "\n" + raw_line
-                        continue  # Don't create a new ScriptLine
-                    else:
+                    if session.narration_mode == "split":
+                        # Split mode: narrator as independent ScriptLine (own id, own raw_text)
                         session.add_line(line)
+                    else:
+                        # Merge mode (default): merge into previous line's raw_text
+                        script_lines = session.script_lines
+                        if script_lines:
+                            prev = script_lines[-1]
+                            prev.raw_text = (prev.raw_text or "") + "\n" + raw_line
+                            continue  # Don't create a new ScriptLine
+                        else:
+                            session.add_line(line)
                 else:
                     session.add_line(line)
+
+                # Format-violation detection: action leaked into TTS text (dialogue only).
+                # Count violations to track LLM format compliance. Threshold warning emitted
+                # by caller if violation rate exceeds 30%.
+                if line.speaker != "narrator":
+                    if re.search(r"[（(][^）)]+[）)]", line.tts_text):
+                        session.format_violations = getattr(session, "format_violations", 0) + 1
 
                 # Honour A2D_SHOW_ACTIONS env var (default "1" = show)
                 show_actions = os.environ.get("A2D_SHOW_ACTIONS", "1") != "0"
@@ -951,8 +962,24 @@ class AIService:
 
         Tries GameRole.voice_maker first (LingChat native path), falls back
         to the AIService-level tts_provider.
+
+        Narrator routing: when speaker == "narrator", borrow the voice_maker of the
+        character identified by session.narrator_voice_key. If key is None/invalid or the
+        character has no voice_maker, return "" (silent fallback, pure subtitle).
         """
         import os
+
+        # ── Narrator dispatch: reuse selected character's voice_maker ─
+        if speaker == "narrator":
+            vk = self.a2d_session.narrator_voice_key
+            if isinstance(vk, str) and vk:
+                cfg = self.a2d_session.characters.get(vk)
+                if cfg and cfg.game_role and cfg.game_role.voice_maker:
+                    speaker = vk  # reuse that character's voice_maker via Path 1 below
+                else:
+                    return ""  # silent fallback: invalid key or no voice_maker
+            else:
+                return ""  # silent fallback: no narrator_voice_key set
 
         # ── Path 1: GameRole.voice_maker (per-character, preferred) ─
         cfg = self.a2d_session.characters.get(speaker) if speaker else None

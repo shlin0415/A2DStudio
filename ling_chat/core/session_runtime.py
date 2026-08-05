@@ -60,6 +60,16 @@ class SessionRuntime:
         # Budget
         self.budget = BudgetStatus()
 
+        # Narrator configuration
+        # narration_mode: "merge" (default, narrator merged into previous line raw_text)
+        #                 "split" (narrator emitted as independent ScriptLine)
+        self.narration_mode: str = "merge"
+        # narrator_voice_key: script_role_key of character whose voice_maker narrator borrows
+        #                     None = subtitle only (no TTS)
+        self.narrator_voice_key: str | None = None
+        # format_violations: count of lines where action leaked into TTS text
+        self.format_violations: int = 0
+
     # ── Continue / Edit ──────────────────────────────────────────
 
     async def handle_continue(
