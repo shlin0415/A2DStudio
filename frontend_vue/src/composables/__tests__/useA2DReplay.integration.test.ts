@@ -407,4 +407,70 @@ describe('playNextInQueue callback threading (B1/B2 fix)', () => {
     routeLiveAudio('http://host/audio/live2.wav', 'live2', false)
     expect(audioQueue.value.length).toBe(activeQueueLen + 1) // enqueued for playback
   })
+
+  // AC-5: subtitle-timer drives silent lines (narrator without audio).
+  it('engine: silent first line advances via subtitle-timer (AC-5)', async () => {
+    // Capture timer callback without firing it.
+    let timerFn: (() => void) | null = null
+    vi.spyOn(global, 'setTimeout').mockImplementation((fn: () => void) => {
+      timerFn = fn // capture but don't fire
+      return 0 as unknown as ReturnType<typeof setTimeout>
+    })
+
+    try {
+      const store = useScriptStore()
+      // First line is silent narrator, second has audio (passes hasAnyAudio guard).
+      store.addLine(makeLine('n1', 0, { speaker: 'narrator', audio_path: null, display_text: '旁白文本' }))
+      store.addLine(makeLine('a1', 1, { audio_path: '/audio/a1.wav' }))
+
+      _resetReplaySingleton()
+      const replay = useA2DReplay()
+      replay.start(0)
+
+      // Timer should be registered for the silent FIRST line.
+      expect(timerFn).not.toBeNull()
+      expect(replay.state.value).toBe('playing')
+      expect(store.playingLineId).toBe('n1')
+
+      // Manually fire the timer → advance() → moves to a1 (audio).
+      timerFn!()
+      expect(store.playingLineId).toBe('a1')
+    } finally {
+      vi.restoreAllMocks()
+    }
+  })
+
+  // AC-5: pause freezes subtitle-timer, resume rebuilds it.
+  it('engine: pause freezes subtitle-timer, resume rebuilds (AC-5)', async () => {
+    let timerCount = 0
+    vi.spyOn(global, 'setTimeout').mockImplementation((_fn: () => void) => {
+      timerCount++
+      return 0 as unknown as ReturnType<typeof setTimeout>
+    })
+
+    try {
+      const store = useScriptStore()
+      // Silent first line (timer set), audio second (guard).
+      store.addLine(makeLine('n1', 0, { speaker: 'narrator', audio_path: null, display_text: '旁白' }))
+      store.addLine(makeLine('a1', 1, { audio_path: '/audio/a1.wav' }))
+
+      _resetReplaySingleton()
+      const replay = useA2DReplay()
+      replay.start(0)
+
+      // One timer registered for silent line.
+      expect(timerCount).toBe(1)
+
+      // Pause — timer cleared (no new timer yet).
+      replay.pause()
+      expect(replay.state.value).toBe('paused')
+
+      // Resume — timer rebuilt for current silent line.
+      replay.resume()
+      expect(replay.state.value).toBe('playing')
+      expect(timerCount).toBe(2) // rebuilt
+    } finally {
+      vi.restoreAllMocks()
+    }
+  })
 })

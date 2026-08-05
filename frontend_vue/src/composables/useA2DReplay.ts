@@ -167,7 +167,11 @@ export function useA2DReplay() {
         : line.audio_path
       audioQueue.value.push({ url, lineId: line.id })
     }
-    if (!isAudioPlaying.value) {
+    // Arbitration: only start audio queue if the FIRST line has audio.
+    // If the first line is silent, the subtitle-timer drives it; when the timer
+    // advances to an audio line, that line's onEnded-free path will trigger playback.
+    const firstLine = lines[0]
+    if (firstLine && firstLine.audio_path && !isAudioPlaying.value) {
       playNextInQueue(scriptStore, onItemStart, onEnded)
     }
   }

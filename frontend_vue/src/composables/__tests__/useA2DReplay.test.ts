@@ -153,6 +153,16 @@ describe('useA2DReplay state machine', () => {
     expect(replay.error.value).toBe('所有行均缺失音频')
   })
 
+  // AC-7: voiced narrator counts as playable (audio_path set via narrator synthesis).
+  it('AC-7: voiced narrator (audio_path set) counts as playable', () => {
+    const store = useScriptStore()
+    store.addLine(makeLine('n1', 0, { speaker: 'narrator', audio_path: '/audio/narrator_1.wav' }))
+    store.addLine(makeLine('n2', 1, { audio_path: null }))
+    const replay = useA2DReplay()
+    replay.start(0)
+    expect(replay.state.value).toBe('playing')
+  })
+
   // AC-7: missing line doesn't block subsequent normal line.
   it('AC-7 positive: missing audio line skipped, normal line plays', () => {
     const store = useScriptStore()
@@ -175,6 +185,19 @@ describe('useA2DReplay state machine', () => {
     const replay = useA2DReplay()
     replay.start(0)
     expect(replay.skippedLines.value).toEqual(['s1', 's2'])
+  })
+
+  // DEC-2: skippedLines split into missingAudioLines vs silentLines.
+  it('DEC-2: narrator-silent goes to silentLines, truly-missing goes to missingAudioLines', () => {
+    const store = useScriptStore()
+    store.addLine(makeLine('d1', 0, { audio_path: null }))              // missing audio
+    store.addLine(makeLine('n1', 1, { speaker: 'narrator', audio_path: null })) // narrator silent
+    store.addLine(makeLine('a1', 2))                                    // has audio
+    const replay = useA2DReplay()
+    replay.start(0)
+    expect(replay.missingAudioLines.value).toEqual(['d1'])
+    expect(replay.silentLines.value).toEqual(['n1'])
+    expect(replay.skippedLines.value).toEqual(['d1', 'n1'])
   })
 })
 
