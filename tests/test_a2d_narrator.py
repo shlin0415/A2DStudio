@@ -181,3 +181,55 @@ class TestViolationWarningEmission:
         total_dialogue = len([l for l in lines if l and l.speaker != "narrator"])
         rate = session.format_violations / total_dialogue
         assert rate > 0.3  # 50% > 30% → warning should fire
+
+
+# ── AC-7: caplog-based emission path test ────────────────────
+
+
+class TestViolationWarningCaplog:
+    def test_warning_emitted_above_threshold(self, monkeypatch):
+        """50% violation rate → exactly one warning containing '30%' emitted."""
+        from ling_chat.core.session_runtime import SessionRuntime
+        from ling_chat.core.a2d_message_handler import _emit_format_violation_warning
+        from ling_chat.schemas.script_overlay import ScriptLine
+
+        session = SessionRuntime(characters={})
+        session.format_violations = 2
+        # 4 dialogue lines (2 leaks / 4 = 50%)
+        session.script_lines = [
+            ScriptLine(id=f"d{i}", speaker="ema", display_text="t", tts_text="t", index=i)
+            for i in range(4)
+        ]
+
+        # Capture calls to the custom Logger.warning method
+        warnings: list[str] = []
+        from ling_chat.core import a2d_message_handler as mod
+        original_warning = mod.logger.warning
+        monkeypatch.setattr(mod.logger, "warning", lambda msg: warnings.append(msg))
+
+        _emit_format_violation_warning(session)
+
+        assert len(warnings) == 1
+        assert "30%" in warnings[0]
+
+    def test_no_warning_below_threshold(self, monkeypatch):
+        """25% violation rate → zero warnings emitted."""
+        from ling_chat.core.session_runtime import SessionRuntime
+        from ling_chat.core.a2d_message_handler import _emit_format_violation_warning
+        from ling_chat.schemas.script_overlay import ScriptLine
+
+        session = SessionRuntime(characters={})
+        session.format_violations = 1
+        # 4 dialogue lines (1 leak / 4 = 25%)
+        session.script_lines = [
+            ScriptLine(id=f"d{i}", speaker="ema", display_text="t", tts_text="t", index=i)
+            for i in range(4)
+        ]
+
+        warnings: list[str] = []
+        from ling_chat.core import a2d_message_handler as mod
+        monkeypatch.setattr(mod.logger, "warning", lambda msg: warnings.append(msg))
+
+        _emit_format_violation_warning(session)
+
+        assert len(warnings) == 0

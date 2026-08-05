@@ -99,6 +99,22 @@ async def _send_a2d_characters(session, send: SendFn) -> list[dict]:
     return characters
 
 
+def _emit_format_violation_warning(session) -> None:
+    """Emit logger.warning if >30% of dialogue lines had parenthetical action leaked into TTS.
+
+    Extraction of the post-batch warning block from _generate_and_synthesize
+    so it can be unit-tested without the full LLM/TTS pipeline.
+    """
+    total_dialogue = len([l for l in session.script_lines if l.speaker != "narrator"])
+    if total_dialogue > 0 and session.format_violations / total_dialogue > 0.3:
+        rate = session.format_violations / total_dialogue
+        logger.warning(
+            f"A2D: narrator format violation rate {rate:.0%} exceeds 30% "
+            f"({session.format_violations}/{total_dialogue} dialogue lines). "
+            f"Consider switching narration_mode to 'merge'."
+        )
+
+
 async def _generate_and_synthesize(ai_service, send: SendFn) -> int:
     """Stream generate + synthesize: LLM → script_line → TTS → tts_ready per line.
 
@@ -176,14 +192,7 @@ async def _generate_and_synthesize(ai_service, send: SendFn) -> int:
                 logger.warning(f"A2D TTS failed (non-fatal): {tts_e}")
 
         # Emit format-violation warning if >30% of dialogue lines had action in TTS.
-        total_dialogue = len([l for l in session.script_lines if l.speaker != "narrator"])
-        if total_dialogue > 0 and session.format_violations / total_dialogue > 0.3:
-            rate = session.format_violations / total_dialogue
-            logger.warning(
-                f"A2D: narrator format violation rate {rate:.0%} exceeds 30% "
-                f"({session.format_violations}/{total_dialogue} dialogue lines). "
-                f"Consider switching narration_mode to 'merge'."
-            )
+        _emit_format_violation_warning(session)
 
         await send({"type": "status", "payload": {"phase": "paused"}})
         session.last_batch_count = line_count
