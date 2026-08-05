@@ -140,11 +140,18 @@ export function useA2DReplay() {
     _subtitleTimer = setTimeout(() => {
       _timerActive = false
       advance()
-      // After timer advances, if new line has audio and nothing playing, start it.
+      // After advancing, determine what to do with the new current line.
       const newId = scriptStore.playingLineId
       const newLine = replayLines.value.find(l => l.id === newId)
-      if (newLine?.audio_path && !isAudioPlaying.value && audioQueue.value.length > 0) {
-        playNextInQueue(scriptStore, onItemStart, onEnded)
+      if (!newLine) return
+      if (newLine.audio_path) {
+        // Audio line: start playback if queue has items and nothing playing.
+        if (!isAudioPlaying.value && audioQueue.value.length > 0) {
+          playNextInQueue(scriptStore, onItemStart, onEnded)
+        }
+      } else {
+        // Consecutive silent line: re-arm the timer to keep progression going.
+        advanceOnTimer(newLine)
       }
     }, subtitleDurationMs(line.display_text))
   }

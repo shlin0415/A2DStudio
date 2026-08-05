@@ -60,6 +60,7 @@ class ScriptLine:
     tts_text: str = ""
     action: str = ""  # （动作描述）extracted from LLM output, separate from display_text
     raw_text: str = ""  # LLM original line preserved for KV-cache-friendly history
+    tts_had_action: bool = False  # True if parenthetical content leaked inside <TTS> tag (format violation)
 
     state: Literal[
         "draft", "approved", "tts_pending", "tts_ready", "playing", "played", "invalidated"

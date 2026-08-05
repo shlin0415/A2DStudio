@@ -225,6 +225,7 @@ async def _handle_start(ai_service, client_id: str, payload: dict, send: SendFn)
 
     session.mode = "script"
     session.paused = False
+    session.format_violations = 0  # reset per-session so violation rate is fresh
     bs = payload.get("batch_size", 1)
     session.batch_size = max(1, int(bs))  # clamp to >= 1
 

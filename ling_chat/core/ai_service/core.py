@@ -573,10 +573,11 @@ class AIService:
                     session.add_line(line)
 
                 # Format-violation detection: action leaked into TTS text (dialogue only).
-                # The parser sets line.action from stripped parenthetical content; if action
-                # is non-empty on a dialogue line, the LLM mixed action into TTS — count it.
+                # Format-violation detection: parenthetical content leaked into TTS tag
+                # (dialogue only). Parser sets tts_had_action=True only when parens were
+                # found INSIDE the <TTS> tag — trailing action suffix is correct format.
                 # Warning emitted by _generate_and_synthesize after the batch completes.
-                if line.speaker != "narrator" and line.action:
+                if line.speaker != "narrator" and line.tts_had_action:
                     session.format_violations += 1
 
                 # Honour A2D_SHOW_ACTIONS env var (default "1" = show)
@@ -928,7 +929,9 @@ class AIService:
 
         # Defense-in-depth: strip parenthetical action leaked into TTS tag.
         # LLM sometimes writes "<你够了（摔门）>" — GSV would read the parens aloud.
+        # This is a FORMAT VIOLATION (distinct from the correct trailing-action format).
         tts_cleaned, stripped_actions = _clean_tts(tts_text)
+        tts_had_action = bool(stripped_actions)
         if stripped_actions:
             action = (action + "、" + stripped_actions).strip("、") if action else stripped_actions
         tts_text = tts_cleaned if tts_cleaned else tts_text
@@ -944,6 +947,7 @@ class AIService:
             tts_text=tts_text,
             action=action,
             raw_text=text,  # preserve LLM original for KV-cache-friendly history
+            tts_had_action=tts_had_action,  # True = parenthetical leaked into TTS tag (violation)
             state="approved",
         )
 

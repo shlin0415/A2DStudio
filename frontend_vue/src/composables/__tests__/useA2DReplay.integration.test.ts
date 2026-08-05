@@ -442,6 +442,49 @@ describe('playNextInQueue callback threading (B1/B2 fix)', () => {
     }
   })
 
+  // B1: consecutive silent lines — timer re-arms for next silent line.
+  it('engine: consecutive silent lines advance via re-armed timer (B1)', async () => {
+    const timerCallbacks: Array<() => void> = []
+    vi.spyOn(global, 'setTimeout').mockImplementation((fn: () => void) => {
+      timerCallbacks.push(fn)
+      return 0 as unknown as ReturnType<typeof setTimeout>
+    })
+
+    try {
+      const store = useScriptStore()
+      // 3 consecutive silent lines then audio (passes hasAnyAudio guard).
+      store.addLine(makeLine('s1', 0, { speaker: 'narrator', audio_path: null, display_text: '旁白1' }))
+      store.addLine(makeLine('s2', 1, { speaker: 'narrator', audio_path: null, display_text: '旁白2' }))
+      store.addLine(makeLine('s3', 2, { speaker: 'narrator', audio_path: null, display_text: '旁白3' }))
+      store.addLine(makeLine('a1', 3, { audio_path: '/audio/a1.wav' }))
+
+      _resetReplaySingleton()
+      const replay = useA2DReplay()
+      replay.start(0)
+
+      // Timer should be registered for first silent line.
+      expect(timerCallbacks.length).toBe(1)
+      expect(store.playingLineId).toBe('s1')
+
+      // Fire timer 1 → advances to s2, re-arms timer.
+      timerCallbacks[0]()
+      expect(store.playingLineId).toBe('s2')
+      expect(timerCallbacks.length).toBe(2)  // re-armed
+
+      // Fire timer 2 → advances to s3, re-arms timer.
+      timerCallbacks[1]()
+      expect(store.playingLineId).toBe('s3')
+      expect(timerCallbacks.length).toBe(3)  // re-armed
+
+      // Fire timer 3 → advances to a1 (audio), starts audio playback.
+      timerCallbacks[2]()
+      expect(store.playingLineId).toBe('a1')
+      expect(isAudioPlaying.value).toBe(true)
+    } finally {
+      vi.restoreAllMocks()
+    }
+  })
+
   // AC-5: pause freezes subtitle-timer, resume rebuilds it.
   it('engine: pause freezes subtitle-timer, resume rebuilds (AC-5)', async () => {
     let timerCount = 0
