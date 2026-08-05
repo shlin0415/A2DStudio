@@ -5,7 +5,7 @@ import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest'
 import { setActivePinia, createPinia } from 'pinia'
 import { useScriptStore, type ScriptLine } from '@/stores/modules/script'
 import { useGameStore } from '@/stores/modules/game'
-import { audioQueue } from '@/composables/audio-queue'
+import { audioQueue, isAudioPlaying } from '@/composables/audio-queue'
 import { useA2DReplay, _resetReplaySingleton } from '@/composables/useA2DReplay'
 import { getCurrentBGM, playBGM, stopBGM } from '@/composables/useA2DBGM'
 
@@ -432,9 +432,11 @@ describe('playNextInQueue callback threading (B1/B2 fix)', () => {
       expect(replay.state.value).toBe('playing')
       expect(store.playingLineId).toBe('n1')
 
-      // Manually fire the timer → advance() → moves to a1 (audio).
+      // Manually fire the timer → advance() → moves to a1 (audio) AND starts audio queue.
       timerFn!()
       expect(store.playingLineId).toBe('a1')
+      // After advancing to audio line, audioQueue should start draining (isAudioPlaying).
+      expect(isAudioPlaying.value).toBe(true)
     } finally {
       vi.restoreAllMocks()
     }

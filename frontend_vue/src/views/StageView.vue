@@ -9,7 +9,7 @@
     <StageOverlay :visual="currentVisual" />
 
     <!-- P1 replay subtitle: current line display_text synced to playback. -->
-    <SubtitleOverlay :text="replaySubtitle" />
+    <SubtitleOverlay :text="replaySubtitle" :is-narrator="isNarrator" />
 
     <!-- A2D overlay: script editor panel at bottom -->
     <ScriptPanel />
@@ -47,6 +47,9 @@ const playingLine = computed<ScriptLine | null>(() => {
   if (!id) return scriptStore.selectedLine // M2 preview fallback
   return scriptStore.lines.find(l => l.id === id) ?? null
 })
+
+// Derive narrator styling from current playing line's speaker.
+const isNarrator = computed(() => playingLine.value?.speaker === 'narrator')
 
 const currentVisual = computed(() => {
   // globalDefault from settingsStore (user-set current background).

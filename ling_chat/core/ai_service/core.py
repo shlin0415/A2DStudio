@@ -573,11 +573,11 @@ class AIService:
                     session.add_line(line)
 
                 # Format-violation detection: action leaked into TTS text (dialogue only).
-                # Count violations to track LLM format compliance. Threshold warning emitted
-                # by caller if violation rate exceeds 30%.
-                if line.speaker != "narrator":
-                    if re.search(r"[（(][^）)]+[）)]", line.tts_text):
-                        session.format_violations = getattr(session, "format_violations", 0) + 1
+                # The parser sets line.action from stripped parenthetical content; if action
+                # is non-empty on a dialogue line, the LLM mixed action into TTS — count it.
+                # Warning emitted by _generate_and_synthesize after the batch completes.
+                if line.speaker != "narrator" and line.action:
+                    session.format_violations += 1
 
                 # Honour A2D_SHOW_ACTIONS env var (default "1" = show)
                 show_actions = os.environ.get("A2D_SHOW_ACTIONS", "1") != "0"

@@ -185,20 +185,23 @@ async function playNextInQueue(
   // ── Real playback ──
   // Forward onItemStart + onEnded through recursion so the replay engine drives
   // progression (per-line subtitle/emotion sync + natural-end detection).
+  // onEnded returns true if audio queue should continue recursing. When it returns
+  // false (next line is silent, subtitle-timer will drive), do NOT recurse — the
+  // timer callback will start playback for the next audio line when it fires.
   audio.onended = () => {
     emitTrace('audio_end', { lineId: item.lineId })
-    onEnded?.()
-    playNextInQueue(store, onItemStart, onEnded)
+    const continueAudio = onEnded?.() ?? true
+    if (continueAudio) playNextInQueue(store, onItemStart, onEnded)
   }
   audio.onerror = () => {
     emitTrace('audio_error', { lineId: item.lineId })
-    onEnded?.()
-    playNextInQueue(store, onItemStart, onEnded)
+    const continueAudio = onEnded?.() ?? true
+    if (continueAudio) playNextInQueue(store, onItemStart, onEnded)
   }
   audio.play().catch(() => {
     emitTrace('audio_play_failed', { lineId: item.lineId })
-    onEnded?.()
-    playNextInQueue(store, onItemStart, onEnded)
+    const continueAudio = onEnded?.() ?? true
+    if (continueAudio) playNextInQueue(store, onItemStart, onEnded)
   })
 }
 

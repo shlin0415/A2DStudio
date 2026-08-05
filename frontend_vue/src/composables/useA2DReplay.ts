@@ -140,6 +140,12 @@ export function useA2DReplay() {
     _subtitleTimer = setTimeout(() => {
       _timerActive = false
       advance()
+      // After timer advances, if new line has audio and nothing playing, start it.
+      const newId = scriptStore.playingLineId
+      const newLine = replayLines.value.find(l => l.id === newId)
+      if (newLine?.audio_path && !isAudioPlaying.value && audioQueue.value.length > 0) {
+        playNextInQueue(scriptStore, onItemStart, onEnded)
+      }
     }, subtitleDurationMs(line.display_text))
   }
 
@@ -189,16 +195,21 @@ export function useA2DReplay() {
     syncVisual(line)
   }
 
-  /** On each audio end: advance the state machine. Returns false at replay end. */
-  function onEnded() {
-    // After audio ends, check next line. If silent, start subtitle-timer.
+  /**
+   * On each audio end: advance the state machine.
+   * Returns true if audio queue should continue recursing (next line has audio),
+   * false if the next line is silent and the subtitle-timer will drive progression.
+   */
+  function onEnded(): boolean {
     const nextIdx = currentIndex.value + 1
     const nextLine = replayLines.value[nextIdx]
     if (nextLine && !nextLine.audio_path) {
+      // Next line is silent — timer drives it. Do NOT recurse audio queue.
       advanceOnTimer(nextLine)
-    } else {
-      advance()
+      return false
     }
+    advance()
+    return true
   }
 
   // Defense-in-depth: re-sync on playingLineId change (guards against B1 callback-thread regression).

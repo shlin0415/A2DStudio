@@ -175,6 +175,16 @@ async def _generate_and_synthesize(ai_service, send: SendFn) -> int:
             except Exception as tts_e:
                 logger.warning(f"A2D TTS failed (non-fatal): {tts_e}")
 
+        # Emit format-violation warning if >30% of dialogue lines had action in TTS.
+        total_dialogue = len([l for l in session.script_lines if l.speaker != "narrator"])
+        if total_dialogue > 0 and session.format_violations / total_dialogue > 0.3:
+            rate = session.format_violations / total_dialogue
+            logger.warning(
+                f"A2D: narrator format violation rate {rate:.0%} exceeds 30% "
+                f"({session.format_violations}/{total_dialogue} dialogue lines). "
+                f"Consider switching narration_mode to 'merge'."
+            )
+
         await send({"type": "status", "payload": {"phase": "paused"}})
         session.last_batch_count = line_count
         return line_count
