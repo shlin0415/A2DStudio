@@ -192,13 +192,20 @@ def _python_runner_args(command: str) -> list[str] | None:
         return [python_exe, "-c", code]
 
     if len(parts) >= 2:
-        script = parts[1]
+        # P0 fix: resolve script path through sandbox boundary before execution.
+        # Without this, `python ../../../tmp/malicious.py` escapes the sandbox.
+        raw_script = parts[1].strip('"').strip("'")
+        try:
+            safe_script = str(_resolve_sandbox_path(raw_script))
+        except (PermissionError, ValueError):
+            # Return a no-op command that surfaces the error instead of executing.
+            return [python_exe, "-c", f"import sys; sys.stderr.write('Security error: script {raw_script!r} is outside the sandbox\\n'); sys.exit(1)"]
         script_args = parts[2:]
         code = (
             "import runpy, sys; "
             f"sys.path.insert(0, {sandbox_package_path!r}); "
-            f"sys.argv = {[script, *script_args]!r}; "
-            f"runpy.run_path({script!r}, run_name='__main__')"
+            f"sys.argv = {[safe_script, *script_args]!r}; "
+            f"runpy.run_path({safe_script!r}, run_name='__main__')"
         )
         return [python_exe, "-c", code]
 
