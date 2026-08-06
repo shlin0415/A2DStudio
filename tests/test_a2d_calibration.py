@@ -63,13 +63,10 @@ class TestCalibrationReducesWer:
         After _strip_artifacts: both → おやすみ → WER=0.
         Requires jiwer (skipped if not installed).
         """
-        try:
-            from tests.a2d_asr_eval import compute_metrics
-        except ImportError:
-            pytest.skip("jiwer not installed (only in asr-env)")
+        pytest.importorskip("jiwer")
+        from tests.a2d_asr_eval import compute_metrics
 
         # Before-calibration baseline: simulate by calling with already-stripped
         # target but uncalibrated would be 100%; with calibration both match.
         result = compute_metrics("……おやすみ", "おやすみ")
-        assert result["wer"] < 1.0, f"Expected WER < 1.0 after calibration, got {result['wer']}"
         assert result["wer"] == 0.0, f"Expected WER=0 for matching strings, got {result['wer']}"
