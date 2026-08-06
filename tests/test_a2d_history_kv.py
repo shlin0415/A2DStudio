@@ -212,3 +212,42 @@ class TestEmptyHistory:
         assert len(msgs) == 2  # system + opening user message
         assert msgs[1]["role"] == "user"
         assert msgs[1]["content"]  # opening message is non-empty
+
+
+# ── Multi-segment history round-trip ──────────────────────────
+
+
+class TestMultiSegmentHistoryRoundTrip:
+    @staticmethod
+    def _parse(text):
+        from ling_chat.core.ai_service.core import AIService
+
+        class P:
+            _a2d_parse_script_line = AIService._a2d_parse_script_line
+
+        return P()._a2d_parse_script_line(text, "ema")
+
+    def test_reconstruct_preserves_joined_tts(self):
+        """Multi-segment line with raw_text="" → fallback reconstruct keeps joined tts_text."""
+        sr = make_sr()
+        # Multi-segment line, no raw_text (edited/legacy) → fallback reconstruction
+        sr.add_line(ScriptLine(
+            speaker="ema", emotion="温柔",
+            display_text="嗯，永远。……永远，都会在一起。",
+            tts_text="……うん、ずっと。……ずっと、一緒にいる。",
+            raw_text="",
+            state="approved",
+        ))
+        msgs = build_messages(sr)
+        msg = find_assistant(msgs, "ema")
+        assert msg is not None
+        # Fallback form: 【emotion】display<tts_text>
+        assert "【温柔】" in msg["content"]
+        assert "<……うん、ずっと。……ずっと、一緒にいる。>" in msg["content"]
+
+    def test_reparse_no_double_join(self):
+        """Re-parsing the reconstructed single joined tag does NOT split on ——no double-join."""
+        reconstructed = "【温柔】嗯，永远。……永远，都会在一起。<……うん、ずっと。……ずっと、一緒にいる。>"
+        line = self._parse(reconstructed)
+        # Single tag → single segment → tts_text identical (no double-join)
+        assert line.tts_text == "……うん、ずっと。……ずっと、一緒にいる。"

@@ -264,3 +264,87 @@ class TestTTSCleaning:
         assert line is not None
         assert line.tts_text == "hi"
         assert "wave" in line.action and "blush" in line.action
+
+
+# ── Multi-segment TTS extraction ─────────────────────────────
+
+
+class TestMultiSegmentExtraction:
+    """A line can contain multiple <...> segments — all must be voiced."""
+
+    def test_two_segments_joined(self, parser):
+        """【em】a<T1>（x）b<T2> → segments joined with 、 (T1 ends with 。 → 。、)."""
+        line = parse(parser, "【温柔】嗯，永远。<……うん、ずっと。>（动作描述）……永远，都会在一起。<……ずっと、一緒にいる。>")
+        assert line is not None
+        # Segment 1 = "……うん、ずっと。", Segment 2 = "……ずっと、一緒にいる。"
+        # Joined with 、 → "……うん、ずっと。、……ずっと、一緒にいる。"
+        assert line.tts_text == "……うん、ずっと。、……ずっと、一緒にいる。"
+
+    def test_three_segments_joined(self, parser):
+        """3 segments joined with 、."""
+        line = parse(parser, "【em】a<T1>b<T2>c<T3>")
+        assert line.tts_text == "T1、T2、T3"
+
+    def test_interleaved_actions(self, parser):
+        """Segments interleaved with （action） text."""
+        line = parse(parser, "【em】a<T1>（x）b<T2>（y）c<T3>")
+        assert line.tts_text == "T1、T2、T3"
+
+    def test_empty_tag_dropped(self, parser):
+        """Empty tag <> between valid tags — no 、、 artifact."""
+        line = parse(parser, "【em】a<T1><><T2>")
+        assert line.tts_text == "T1、T2"
+
+    def test_whitespace_only_tag_dropped(self, parser):
+        """Whitespace-only tag < > dropped — no padding artifact."""
+        line = parse(parser, "【em】a<T1>< ><T2>")
+        assert line.tts_text == "T1、T2"
+
+    def test_unbalanced_tag_dropped(self, parser):
+        """Unbalanced <T1 (no close) dropped by findall, not crashed."""
+        line = parse(parser, "【em】a<T1")
+        # No closing > → findall finds nothing → falls back to content
+        assert line is not None
+        assert line.tts_text == "a<T1"  # fallback: content unchanged
+
+    def test_single_segment_unchanged(self, parser):
+        """Single segment still works (no regression)."""
+        line = parse(parser, "【害羞】你好<Hello>")
+        assert line.tts_text == "Hello"
+
+    def test_no_brackets_falls_back(self, parser):
+        """No <...> tag → tts_text = content (unchanged behavior)."""
+        line = parse(parser, "【害羞】你好")
+        assert line.tts_text == "你好"
+
+
+# ── Multi-segment display_text / action determinism ──────────
+
+
+class TestMultiSegmentDisplayAndAction:
+    def test_display_text_no_residual_angle_brackets(self, parser):
+        """display_text for multi-segment has no residual < or >."""
+        line = parse(parser, "【em】a<T1>（mid）b<T2>")
+        assert "<" not in line.display_text
+        assert ">" not in line.display_text
+
+    def test_display_text_deterministic(self, parser):
+        """display_text = fragments concatenated (non-TTS text minus tags)."""
+        line = parse(parser, "【em】a<T1>（mid）b<T2>")
+        # display_text = "a（mid）b" (tags stripped, mid-line （） retained)
+        assert line.display_text == "a（mid）b"
+
+    def test_action_single_trailing_captured(self, parser):
+        """Single trailing （） captured — baseline action behavior."""
+        line = parse(parser, "【em】a<T1>（trailing）")
+        assert line.action == "trailing"
+
+    def test_action_leaked_paren_inside_tts_captured(self, parser):
+        """Leaked （） inside a TTS tag captured via post-join _clean_tts."""
+        line = parse(parser, "【em】a<T1（leaked）>b<T2>")
+        assert "leaked" in line.action
+
+    def test_mid_line_paren_does_not_crash(self, parser):
+        """Mid-line （） does not crash the parser."""
+        line = parse(parser, "【em】a<T1>（mid）b<T2>")
+        assert line is not None

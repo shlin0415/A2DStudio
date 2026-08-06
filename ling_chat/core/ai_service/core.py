@@ -22,6 +22,11 @@ from ling_chat.schemas.character_settings import CharacterSettings
 from ling_chat.utils.function import Function
 
 
+# Japanese pause marker for joining multi-segment TTS lines.
+# Precedent: action field joins multiple stripped values with 、 (core.py ~L936).
+TTS_JOIN_SEP = "、"
+
+
 def _clean_tts(src: str) -> tuple[str, str]:
     """Strip parenthetical action leaked into TTS text.
 
@@ -916,8 +921,16 @@ class AIService:
         if not content:
             content = text
 
-        tts_match = re.search(r"<(.+?)>", content)
-        tts_text = tts_match.group(1) if tts_match else content
+        # Extract ALL <...> segments (not just the first). A line can contain
+        # multiple TTS segments interleaved with action text, e.g.
+        #   【em】a<T1>（mid）b<T2>  →  tts_text = "T1、T2"
+        # Use [^>]+ (not .+?) so empty <> is dropped and >...< boundaries are
+        # respected. Whitespace-only tags are filtered. Real parenthetical
+        # cleaning happens via the post-join _clean_tts call below, which also
+        # accumulates stripped （） content into the action field.
+        tts_matches = re.findall(r"<([^>]+)>", content)
+        segments = [m for m in tts_matches if m.strip()]
+        tts_text = TTS_JOIN_SEP.join(segments) if segments else content
         display_text = re.sub(r"<.+?>", "", content).strip()
 
         # Extract action （...）at end of line — preserve it as a separate field

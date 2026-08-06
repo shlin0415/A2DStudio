@@ -21,6 +21,7 @@ import argparse
 import asyncio
 import json
 import os
+import re
 import sys
 import time
 import wave
@@ -320,6 +321,26 @@ def _normalize(text: str) -> str:
     return text.strip()
 
 
+def _strip_artifacts(text: str) -> str:
+    """Strip leading/trailing non-voiced symbols from an eval string.
+
+    GSV does not voice leading/trailing ellipsis (……), so ASR drops them too —
+    keeping them inflates WER artifactually (e.g. ……おやすみ → target keeps ".."
+    as a fugashi token while ASR omits it → first token wrong → WER cascades).
+
+    Also strips leading/trailing commas: the multi-segment join separator
+    (TTS_JOIN_SEP "、") becomes "," after _normalize and appears at segment
+    boundaries. Internal commas/punctuation are voiced and MUST stay.
+
+    Applied to BOTH target and ASR so the comparison stays symmetric.
+    """
+    text = re.sub(r'^[.。·・…]+', '', text)   # leading ellipsis
+    text = re.sub(r'[.。·・…]+$', '', text)   # trailing ellipsis
+    text = re.sub(r'^[,]+', '', text)          # leading commas (join-sep artifact)
+    text = re.sub(r'[,]+$', '', text)          # trailing commas (join-sep artifact)
+    return text.strip()
+
+
 def compute_metrics(text_target: str, text_asr: str) -> dict:
     """Compute CER and WER between target and ASR output.
 
@@ -341,6 +362,11 @@ def compute_metrics(text_target: str, text_asr: str) -> dict:
     # Normalize: strip punctuation + whitespace for content-only comparison
     t_norm = _normalize(text_target)
     a_norm = _normalize(text_asr)
+
+    # Strip leading/trailing non-voiced artifacts (ellipsis + join-separator)
+    # from BOTH sides. Internal punctuation is voiced by GSV and stays.
+    t_norm = _strip_artifacts(t_norm)
+    a_norm = _strip_artifacts(a_norm)
 
     if not t_norm:
         return {"cer": 0.0, "wer": 0.0, "target_len": 0, "asr_len": len(a_norm), "language": "unknown"}

@@ -298,6 +298,10 @@ async def _handle_regenerate_tts(ai_service, client_id: str, payload: dict, send
 
     Translates display_text to voice_language before TTS when languages differ.
     Updates ScriptLine in session with translated tts_text.
+
+    Known limitation: regenerate receives display_text only (not raw_text), so a
+    multi-segment line (multiple <...> tags) collapses to single-segment here —
+    only the joined tts_text is re-synthesized. Out of scope to fix (DEC-2).
     """
     line_id = payload.get("id", "")
     text = payload.get("text", "")
