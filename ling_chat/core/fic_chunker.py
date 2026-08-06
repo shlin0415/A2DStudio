@@ -218,18 +218,27 @@ class Chunker:
             elif len(buf) + len(part) <= self.chunk_max_chars:
                 buf += part
             else:
-                pieces.append(self._sub_chunk(chunk, buf, base_line, offset))
+                # Emit buf — char-chop if it alone exceeds the max (a single
+                # run-on sentence longer than chunk_max_chars).
+                pieces.extend(self._emit(chunk, buf, base_line, offset))
                 offset += len(buf)
                 buf = part
 
-        # Last carry — if it alone exceeds the max (run-on), hard-cut by char.
+        # Last carry — same char-chop guard so the hard ceiling holds.
         if buf:
-            if len(buf) <= self.chunk_max_chars:
-                pieces.append(self._sub_chunk(chunk, buf, base_line, offset))
-            else:
-                for piece in self._char_chop(buf):
-                    pieces.append(self._sub_chunk(chunk, piece, base_line, offset))
-                    offset += len(piece)
+            pieces.extend(self._emit(chunk, buf, base_line, offset))
+
+        return pieces
+
+    def _emit(self, chunk: Chunk, buf: str, base_line: int, offset: int) -> List[Chunk]:
+        """Return buf as one or more sub-chunks, char-chopping if it exceeds the max."""
+        if len(buf) <= self.chunk_max_chars:
+            return [self._sub_chunk(chunk, buf, base_line, offset)]
+        out: List[Chunk] = []
+        for piece in self._char_chop(buf):
+            out.append(self._sub_chunk(chunk, piece, base_line, offset))
+            offset += len(piece)
+        return out
 
         return pieces
 

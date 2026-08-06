@@ -20,6 +20,7 @@ import asyncio
 import json
 import logging
 import os
+import re
 import uuid
 from typing import List, Optional
 
@@ -173,6 +174,22 @@ class FicRuntime:
 现在开始改编这个片段，一次输出一行（标记+台词/旁白），忠实于原文。"""
 
     # ------------------------------------------------------------------
+    # Material guard (AC-2 negative)
+    # ------------------------------------------------------------------
+    _SENTENCE_BOUND = re.compile(r"(?<=[。！？；])\s*")
+
+    def _truncate_material(self, material: str) -> str:
+        """Truncate over-long material at the last sentence boundary + marker."""
+        if len(material) <= self.MAX_MATERIAL_CHARS:
+            return material
+        truncated = material[: self.MAX_MATERIAL_CHARS]
+        # Cut at the last sentence boundary so we don't split mid-sentence.
+        last = truncated.rfind("。")
+        if last > 0:
+            truncated = truncated[: last + 1]
+        return truncated + self._TRUNCATION_MARKER
+
+    # ------------------------------------------------------------------
     # Messages (reuse A2D history convention)
     # ------------------------------------------------------------------
     def build_messages(self, system_prompt: str) -> list[dict]:
@@ -200,12 +217,19 @@ class FicRuntime:
     # ------------------------------------------------------------------
     # Generation
     # ------------------------------------------------------------------
+    # AC-2 guard: material longer than this is truncated with a visible marker.
+    MAX_MATERIAL_CHARS = 4000
+    _TRUNCATION_MARKER = "[材料已截断]"
+
     async def generate_one(self, material: str) -> Optional[dict]:
         """Generate one script line from the reference material."""
         if not self.session.characters:
             raise RuntimeError("No characters configured in FicRuntime")
         if material is None:
             raise ValueError("material=None — nothing to adapt (AC-2 guard)")
+
+        # AC-2 negative: over-long material → truncate at sentence boundary + marker.
+        material = self._truncate_material(material)
 
         speaker_ids = list(self.session.characters.keys())
         system_prompt = self.build_prompt(material, speaker_ids)
@@ -226,6 +250,12 @@ class FicRuntime:
                     sid = marker.get("speaker", "")
                     if sid in session.characters:
                         current_speaker = sid
+                    else:
+                        # AC-3 negative: unknown speaker → narrator + warning.
+                        logger.warning(
+                            f"unmapped speaker '{sid}', defaulting to narrator"
+                        )
+                        current_speaker = "narrator"
                 except (json.JSONDecodeError, KeyError, ValueError):
                     pass
                 continue

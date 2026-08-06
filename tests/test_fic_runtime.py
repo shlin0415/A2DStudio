@@ -64,6 +64,15 @@ class TestAC2Injection:
         with pytest.raises(ValueError, match="None"):
             asyncio.run(rt.generate_one(None))
 
+    def test_oversized_material_truncated_with_marker(self, caplog):
+        """AC-2 negative: material longer than max is truncated + visible marker."""
+        rt = _make_runtime()
+        rt.MAX_MATERIAL_CHARS = 100
+        long_mat = "哈" * 500
+        truncated = rt._truncate_material(long_mat)
+        assert rt._TRUNCATION_MARKER in truncated
+        assert len(truncated) <= 100 + len(rt._TRUNCATION_MARKER)
+
 
 # ---------------------------------------------------------------------------
 # AC-3: generation + history carry-over
@@ -108,14 +117,14 @@ class TestAC3Generation:
         # History from line1 must be present for line2's generation.
         assert len(rt.session.script_lines) >= 2
 
-    def test_unknown_speaker_defaults_to_narrator(self):
+    def test_unknown_speaker_defaults_to_narrator(self, caplog):
+        """AC-3 negative: unmapped speaker marker → narrator + warning."""
         rt = _make_runtime()
-        _mock_llm(rt, ["【高兴】你好<こんにちは>"])
-        # Only ema/hiro configured; default speaker is first key.
+        _mock_llm(rt, ['{"speaker":"unknown_guest"}\n【高兴】你好<こんにちは>'])
         line = asyncio.run(rt.generate_one("材料"))
         assert line is not None
-        # First configured key is "ema" → assigned as speaker.
-        assert line.speaker in ("ema", "hiro")
+        assert line.speaker == "narrator"
+        assert "unmapped speaker" in caplog.text
 
     def test_garbage_llm_output_returns_none(self):
         rt = _make_runtime()

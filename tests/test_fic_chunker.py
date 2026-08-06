@@ -133,6 +133,15 @@ class TestHardSplit:
         chunks = c.split(text)
         assert len(chunks) == 1
 
+    def test_hard_split_ceiling_with_following_sentence(self):
+        """B1 fix: an intermediate sentence > max is still char-chopped (hard ceiling)."""
+        text = "啊" * 4000 + "。" + "哦" * 100  # first sentence > max, then more
+        c = Chunker(chunk_max_chars=3000)
+        chunks = c.split(text)
+        assert len(chunks) >= 2
+        for ch in chunks:
+            assert len(ch.text) <= 3000, f"chunk exceeds max: {len(ch.text)}"
+
 
 class TestNegative:
     def test_empty_input_raises(self):

@@ -114,16 +114,23 @@ async def _execute(
                 }
             )
 
+    # AC-5: fidelity scoring + report.
+    from ling_chat.core.fic_scorer import score_chunks
+
+    report = score_chunks(chunks, results)
+
     manifest = {
         "input": str(input_path),
         "seed": seed,
         "chunk_count": len(chunks),
         "line_count": len(results),
         "lines": results,
+        "report": report,
     }
     out = output_dir / "fic_manifest.json"
     out.write_text(json.dumps(manifest, ensure_ascii=False, indent=2), encoding="utf-8")
     print(f"Generated {len(results)} lines from {len(chunks)} chunks.")
+    print(f"Fidelity overall: {report['overall']}")
     print(f"Wrote manifest: {out}")
     return 0
 
