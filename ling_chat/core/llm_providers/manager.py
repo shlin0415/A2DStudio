@@ -48,8 +48,8 @@ class LLMManager:
     def process_message(self, messages: List[Dict]):
         return self.provider.generate_response(messages)
 
-    async def process_message_stream(self, messages: List[Dict]):
-        async for chunk in self.provider.generate_stream_response(messages):
+    async def process_message_stream(self, messages: List[Dict], **kwargs):
+        async for chunk in self.provider.generate_stream_response(messages, **kwargs):
             yield chunk
 
     async def process_message_with_tools(

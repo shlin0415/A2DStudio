@@ -92,7 +92,7 @@ def _mock_llm(rt: FicRuntime, responses: list[str]) -> None:
     """Patch the LLM to return scripted responses sequentially."""
     calls = iter(responses)
 
-    async def _fake_stream(messages):
+    async def _fake_stream(messages, **kwargs):
         text = next(calls)
         yield text
 
@@ -142,6 +142,22 @@ class TestAC3Generation:
         line = asyncio.run(rt.generate_one("材料"))
         assert line is not None
         assert line.speaker == "narrator"
+
+    def test_seed_threaded_to_llm(self):
+        """AC-7: seed + temperature are passed to the LLM call."""
+        rt = _make_runtime()
+        captured = {}
+
+        async def _capture(messages, **kwargs):
+            captured.update(kwargs)
+            yield '{"speaker":"ema"}\n【高兴】你好<こんにちは>'
+
+        rt.llm.process_message_stream = _capture  # type: ignore[method-assign]
+        rt.seed = 99
+        rt.temperature = 0.0
+        asyncio.run(rt.generate_one("材料"))
+        assert captured.get("seed") == 99
+        assert captured.get("temperature") == 0.0
 
     def test_garbage_llm_output_returns_none(self):
         rt = _make_runtime()

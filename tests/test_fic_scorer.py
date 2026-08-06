@@ -60,13 +60,15 @@ class TestScoreChunks:
         return Chunker(chunk_max_chars=500).split(text)
 
     def test_aggregate_schema(self):
+        import asyncio
+
         chunks = self._chunks()
         assert len(chunks) >= 2
         lines = [
             {"chunk_id": chunks[0].chunk_id, "display_text": "希罗听见了艾玛的心声"},
             {"chunk_id": chunks[1].chunk_id, "display_text": "艾玛跑过来"},
         ]
-        report = score_chunks(chunks, lines)
+        report = asyncio.run(score_chunks(chunks, lines))
         assert "overall" in report
         assert "per_chunk" in report
         assert report["scorer"] == "EmbeddingScorer"
@@ -74,12 +76,14 @@ class TestScoreChunks:
 
     def test_missing_source_span_skips_with_warning(self, caplog):
         """AC-5 negative: chunk with no source span -> skipped, not fabricated."""
+        import asyncio
+
         chunks = self._chunks()
         lines = [
             {"chunk_id": 0, "display_text": "希罗听见了艾玛的心声"},
             {"chunk_id": 99, "display_text": "no source for this"},  # no such chunk
         ]
-        report = score_chunks(chunks, lines)
+        report = asyncio.run(score_chunks(chunks, lines))
         # chunk 99 has no matching source -> skipped.
         assert report["chunk_count"] == 1
         assert any("missing source" in m or "skipping" in m for m in caplog.messages)
@@ -106,6 +110,32 @@ class TestNoCerWer:
 # ---------------------------------------------------------------------------
 # LLM-judge scorer (AC-5 positive)
 # ---------------------------------------------------------------------------
+
+
+class TestScoreChunksJudge:
+    """AC-5: judge wired into score_chunks report."""
+
+    def test_judge_score_in_report(self):
+        import asyncio
+
+        class FakeLLM:
+            async def process_message_stream(self, messages, **kwargs):
+                yield '{"score": 4, "rationale": "good"}'
+
+        from ling_chat.core.fic_chunker import Chunker
+        from ling_chat.core.fic_scorer import LLMJudgeScorer, score_chunks
+
+        text = "希罗听见了艾玛的心声。\n\n艾玛跑过来。"
+        chunks = Chunker(chunk_max_chars=3000).split(text)
+        lines = [
+            {"chunk_id": chunks[0].chunk_id, "display_text": "希罗听见了艾玛的心声"},
+        ]
+        judge = LLMJudgeScorer(llm=FakeLLM())
+        report = asyncio.run(score_chunks(chunks, lines, judge=judge))
+        assert "judge_overall" in report
+        assert report["judge_overall"] == 4
+        assert report["per_chunk"][0]["judge_score"] == 4
+        assert "good" in report["per_chunk"][0]["judge_rationale"]
 
 
 class TestLLMJudgeScorer:

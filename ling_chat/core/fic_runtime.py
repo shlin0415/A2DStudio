@@ -110,12 +110,16 @@ class FicRuntime:
         batch_size: int = 1,
         narration_mode: str = "merge",
         narrator_voice_key: Optional[str] = None,
+        seed: int = 42,
+        temperature: float = 0.0,
     ) -> None:
         self.session = SessionRuntime(characters=characters)
         self.session.batch_size = batch_size
         self.session.narration_mode = narration_mode
         self.session.narrator_voice_key = narrator_voice_key
         self.llm = llm if llm is not None else LLMManager()
+        self.seed = seed
+        self.temperature = temperature
 
     @classmethod
     async def create(
@@ -126,6 +130,8 @@ class FicRuntime:
         batch_size: int = 1,
         narration_mode: str = "merge",
         narrator_voice_key: Optional[str] = None,
+        seed: int = 42,
+        temperature: float = 0.0,
     ) -> "FicRuntime":
         """Async factory — builds character configs (needs a running loop for GSV)."""
         built = characters if characters is not None else await _build_character_configs()
@@ -135,6 +141,8 @@ class FicRuntime:
             batch_size=batch_size,
             narration_mode=narration_mode,
             narrator_voice_key=narrator_voice_key,
+            seed=seed,
+            temperature=temperature,
         )
 
     # ------------------------------------------------------------------
@@ -295,7 +303,10 @@ class FicRuntime:
 
     async def _call_llm(self, messages: list[dict]) -> str:
         full_text = ""
-        async for chunk in self.llm.process_message_stream(messages):
+        # AC-7: thread provider-native seed + temperature for determinism.
+        async for chunk in self.llm.process_message_stream(
+            messages, seed=self.seed, temperature=self.temperature
+        ):
             if isinstance(chunk, str):
                 full_text += chunk
             elif hasattr(chunk, "content"):

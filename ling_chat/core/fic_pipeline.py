@@ -88,7 +88,7 @@ async def _execute(
     """Real generation + synthesis loop (M2). Returns (exit_code, results)."""
     from ling_chat.core.fic_runtime import FicRuntime
 
-    rt = await FicRuntime.create(batch_size=batch_size)
+    rt = await FicRuntime.create(batch_size=batch_size, seed=seed)
     results = []
 
     for chunk in chunks:
@@ -115,10 +115,11 @@ async def _execute(
                 }
             )
 
-    # AC-5: fidelity scoring + report.
-    from ling_chat.core.fic_scorer import score_chunks
+    # AC-5: fidelity scoring + report (embedding + LLM judge).
+    from ling_chat.core.fic_scorer import LLMJudgeScorer, score_chunks
 
-    report = score_chunks(chunks, results)
+    judge = LLMJudgeScorer(llm=rt.llm)
+    report = await score_chunks(chunks, results, judge=judge)
 
     manifest = {
         "input": str(input_path),
@@ -158,11 +159,15 @@ def run_demo(output_dir: Path, seed: int) -> int:
     fic_lines = _load_text(fic_path).split("\n")
     excerpt = "\n".join(fic_lines[span["start_line"] - 1 : span["end_line"]])
 
-    # Run the pipeline on the excerpt (single chunk, one line per ground-truth line).
+    # Run the pipeline on the excerpt: one generated line per ground-truth line
+    # so the accuracy evaluation is meaningful (AC-6 positive: >=10 lines).
     from ling_chat.core.fic_chunker import Chunker
 
     chunks = Chunker(chunk_max_chars=3000).split(excerpt)
-    rc, results = _run(_execute(chunks, output_dir, fic_path, seed, batch_size=1))
+    batch_size = max(1, len(gt["lines"]))
+    rc, results = _run(
+        _execute(chunks, output_dir, fic_path, seed, batch_size=batch_size)
+    )
     if rc != 0:
         return rc
 

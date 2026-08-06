@@ -147,14 +147,20 @@ class TestDemoEndToEnd:
         """
         from ling_chat.core.fic_pipeline import run_demo
 
-        # Alternate narrator / ema / hiro to exercise speaker + type matching.
+        # Match the ground-truth sequence exactly (10 lines):
+        # [narrator, narrator, narrator, ema, hiro, ema, hiro, narrator, hiro, ema]
+        # so the >=80% accuracy thresholds are meaningful and pass.
         RESPONSES = [
-            "旁白：那是一个平凡的早晨。",
-            '{"speaker":"ema"}\n【高兴】希罗，久等了！<久等了！>（跑来）',
-            '{"speaker":"hiro"}\n【害羞】艾玛，今天还算早。<今日は早いね。>',
-            "旁白：两人牵手走在路上。",
-            '{"speaker":"ema"}\n【开心】嘿嘿，不能让希罗酱久等啊。<待たせないね。>',
-            '{"speaker":"hiro"}\n【认真】走吧。<行こう。>（伸手）',
+            "旁白：那是一个平凡的早晨。",  # narrator/narration (GT line 0)
+            "旁白：二阶堂希罗最近感觉自己有一些奇怪的变化。",  # narrator (GT line 1)
+            "旁白：那是一个平凡的早晨，两个人约好一起去上学。",  # narrator (GT line 2)
+            '{"speaker":"ema"}\n【高兴】希罗，久等了！<久等了！>（跑来）',  # ema (GT line 3)
+            '{"speaker":"hiro"}\n【害羞】艾玛，今天还算早。<今日は早いね。>',  # hiro (GT line 4)
+            '{"speaker":"ema"}\n【开心】嘿嘿，不能让希罗酱久等啊。<待たせないね。>',  # ema (GT line 5)
+            '{"speaker":"hiro"}\n【认真】走吧。<行こう。>（伸手）',  # hiro (GT line 6)
+            "旁白：希罗伸手抓住了艾玛的左手。",  # narrator (GT line 7)
+            '{"speaker":"hiro"}\n【疑惑】你刚才说什么？<何？>',  # hiro (GT line 8)
+            '{"speaker":"ema"}\n【慌张】啊？我没说话呀。<ううん、何も。>',  # ema (GT line 9)
         ]
         counter = {"i": 0}
 

@@ -200,7 +200,7 @@ Respond in EXACT JSON: {"score": <1-5>, "rationale": "<one sentence>"}"""
 # ---------------------------------------------------------------------------
 # Per-chunk + aggregate scoring over a pipeline run
 # ---------------------------------------------------------------------------
-def score_chunks(
+async def score_chunks(
     chunks: List[Chunk],
     generated_lines: List[dict],
     scorer: Optional[BaseScorer] = None,
@@ -210,11 +210,13 @@ def score_chunks(
 
     generated_lines: list of dicts with at least {"chunk_id", "display_text"}.
     Returns per-chunk + overall aggregate. Chunks with no source span are
-    skipped with a warning (AC-5 negative).
+    skipped with a warning (AC-5 negative). When a judge is provided, also
+    computes a 1-5 judge_score per chunk + judge_overall.
     """
     scorer = scorer or _default_scorer()
 
     by_chunk: dict[int, list[float]] = {}
+    by_chunk_text: dict[int, list[str]] = {}
     for line in generated_lines:
         cid = line.get("chunk_id")
         gen_text = line.get("display_text") or line.get("tts_text") or ""
@@ -228,6 +230,7 @@ def score_chunks(
             continue
         score = scorer.score(chunk.text, gen_text)
         by_chunk.setdefault(cid, []).append(score)
+        by_chunk_text.setdefault(cid, []).append(gen_text)
 
     def _chunk_info(cid: int) -> tuple[dict, str]:
         c = next((c for c in chunks if c.chunk_id == cid), None)
@@ -237,17 +240,24 @@ def score_chunks(
         )
 
     per_chunk = []
+    judge_scores: list[int] = []
     for cid, scores in sorted(by_chunk.items()):
         span, text = _chunk_info(cid)
-        per_chunk.append(
-            {
-                "chunk_id": cid,
-                "source_span": span,
-                "source_text": text,
-                "generated_count": len(scores),
-                "mean_score": round(sum(scores) / len(scores), 4),
-            }
-        )
+        entry = {
+            "chunk_id": cid,
+            "source_span": span,
+            "source_text": text,
+            "generated_count": len(scores),
+            "mean_score": round(sum(scores) / len(scores), 4),
+        }
+        # LLM-judge score per chunk (AC-5 positive).
+        if judge is not None:
+            gen_combined = " ".join(by_chunk_text.get(cid, []))
+            judge_result = await judge.score(text, gen_combined)
+            entry["judge_score"] = judge_result.score
+            entry["judge_rationale"] = judge_result.rationale
+            judge_scores.append(judge_result.score)
+        per_chunk.append(entry)
 
     all_scores = [s for scores in by_chunk.values() for s in scores]
     overall = round(sum(all_scores) / len(all_scores), 4) if all_scores else 0.0
@@ -259,4 +269,10 @@ def score_chunks(
         "line_count": len(all_scores),
         "per_chunk": per_chunk,
     }
+    if judge is not None:
+        result["judge_overall"] = (
+            round(sum(judge_scores) / len(judge_scores), 2)
+            if judge_scores
+            else None
+        )
     return result
