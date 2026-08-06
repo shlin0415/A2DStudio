@@ -24,27 +24,39 @@ class TestDryRun:
         # Dry-run must NOT create the output directory.
         assert not tmp_out.exists()
 
-    def test_run_writes_manifest(self, tmp_out: Path):
+    def test_run_writes_manifest(self, tmp_out: Path, monkeypatch):
+        # Mock the LLM so this tests pipeline wiring, not the live model.
+        async def _fake_call(self, messages):
+            return '{"speaker":"ema"}\n【高兴】你好<こんにちは>（笑う）'
+
+        monkeypatch.setattr(
+            "ling_chat.core.fic_runtime.FicRuntime._call_llm", _fake_call
+        )
         rc = main(["--input", str(FIC), "--output", str(tmp_out), "--seed", "42"])
         assert rc == 0
         manifest = tmp_out / "fic_manifest.json"
         assert manifest.exists()
         data = json.loads(manifest.read_text(encoding="utf-8"))
         assert data["seed"] == 42
-        assert data["chunk_count"] == len(data["chunks"])
-        assert data["chunks"][0]["start_line"] == 1
+        # Real run emits a "lines" array (generated script lines).
+        assert data["line_count"] == len(data["lines"])
+        assert data["line_count"] >= 1
 
-    def test_seed_reproducibility(self, tmp_out: Path):
-        """Same seed -> identical manifest (chunk spans)."""
+    def test_seed_reproducibility(self, tmp_out: Path, monkeypatch):
+        """Same seed -> identical manifest (line count)."""
+        async def _fake_call(self, messages):
+            return '{"speaker":"ema"}\n【高兴】你好<こんにちは>（笑う）'
+
+        monkeypatch.setattr(
+            "ling_chat.core.fic_runtime.FicRuntime._call_llm", _fake_call
+        )
         a = tmp_out / "a"
         b = tmp_out / "b"
         main(["--input", str(FIC), "--output", str(a), "--seed", "7"])
         main(["--input", str(FIC), "--output", str(b), "--seed", "7"])
         ma = json.loads((a / "fic_manifest.json").read_text(encoding="utf-8"))
         mb = json.loads((b / "fic_manifest.json").read_text(encoding="utf-8"))
-        assert [c["start_line"] for c in ma["chunks"]] == [
-            c["start_line"] for c in mb["chunks"]
-        ]
+        assert ma["line_count"] == mb["line_count"]
 
 
 class TestNegative:

@@ -107,6 +107,33 @@ class TestParagraphSplit:
 # AC-1 Negative
 # ---------------------------------------------------------------------------
 
+class TestHardSplit:
+    def test_over_long_paragraph_is_hard_split(self):
+        """A lone paragraph longer than max is split into sub-chunks (B1 fix)."""
+        long_para = "哈" * 5000
+        c = Chunker(chunk_max_chars=3000)
+        chunks = c.split(long_para)
+        assert len(chunks) >= 2
+        for ch in chunks:
+            assert len(ch.text) <= 3000
+
+    def test_hard_split_at_sentence_boundary(self):
+        """Over-long text with sentence terminators splits at boundaries."""
+        text = ("你好。" * 800) + ("世界！" * 800)  # well over 3000 chars
+        c = Chunker(chunk_max_chars=3000)
+        chunks = c.split(text)
+        assert len(chunks) >= 2
+        for ch in chunks:
+            assert len(ch.text) <= 3000
+
+    def test_short_paragraphs_still_merge(self):
+        """Short paragraphs still greedy-merge (no regression)."""
+        text = "短。\n\n很短。\n\n极短。"
+        c = Chunker(chunk_max_chars=3000)
+        chunks = c.split(text)
+        assert len(chunks) == 1
+
+
 class TestNegative:
     def test_empty_input_raises(self):
         c = Chunker()

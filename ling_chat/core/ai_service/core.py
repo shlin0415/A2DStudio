@@ -868,104 +868,113 @@ class AIService:
     def _a2d_parse_script_line(
         self, raw_text: str, speaker: str
     ) -> "ScriptLine | None":
-        """Parse one line of LLM output into a ScriptLine.
+        return parse_script_line(raw_text, speaker)
 
-        Expected format: 【emotion】display_text<TTS_text>（action） or 【emotion】display_text<TTS_text>
-        Language-agnostic — no assumptions about ja/zh/en.
-        """
-        import re
-        from ling_chat.schemas.script_overlay import ScriptLine
 
-        text = raw_text.strip()
-        if not text:
-            return None
+def parse_script_line(
+    raw_text: str, speaker: str
+) -> "ScriptLine | None":
+    """Parse one line of LLM output into a ScriptLine (module-level, reusable).
 
-        # Explicit narration marker: "旁白：xxx" or "旁白:xxx" (full/half colon).
-        # Priority over pure-（）heuristic. Prefix is stripped from display_text so the
-        # frontend never sees the LLM marker. Content is cleaned via _clean_tts so that
-        # any （action） mixed into the narrator line is NOT read aloud (consistent with
-        # single-line dialogue format behavior).
-        narration_match = re.match(r"^旁白[：:]\s*(.+)$", text)
-        if narration_match:
-            content = narration_match.group(1).strip()
-            if content:
-                cleaned_content, stripped_actions = _clean_tts(content)
-                tts_text = cleaned_content if cleaned_content else content
-                return ScriptLine(
-                    speaker="narrator",
-                    emotion="",
-                    display_text=content,
-                    tts_text=tts_text,  # cleaned = can be voiced via narrator_voice_key
-                    raw_text=text,  # preserve LLM original for KV-cache-friendly history
-                    state="approved",
-                )
-            # Empty after prefix — fall through to pure-action heuristic
+    Shared by AIService._a2d_parse_script_line and standalone pipelines
+    (e.g. fic_runtime) that must not construct a full AIService.
+    Expected format: 【emotion】display_text<TTS_text>（action） or 【emotion】display_text<TTS_text>
+    Language-agnostic — no assumptions about ja/zh/en.
+    """
+    import re
 
-        # Pure action line: entire content is （...）with no dialogue.
-        # LLM sometimes splits actions onto separate lines when batch_size > 1.
-        # Treat as narration — no emotion, no TTS.
-        if re.match(r"^（.+?）$", text):
+    from ling_chat.schemas.script_overlay import ScriptLine
+
+    text = raw_text.strip()
+    if not text:
+        return None
+
+    # Explicit narration marker: "旁白：xxx" or "旁白:xxx" (full/half colon).
+    # Priority over pure-（）heuristic. Prefix is stripped from display_text so the
+    # frontend never sees the LLM marker. Content is cleaned via _clean_tts so that
+    # any （action） mixed into the narrator line is NOT read aloud (consistent with
+    # single-line dialogue format behavior).
+    narration_match = re.match(r"^旁白[：:]\s*(.+)$", text)
+    if narration_match:
+        content = narration_match.group(1).strip()
+        if content:
+            cleaned_content, stripped_actions = _clean_tts(content)
+            tts_text = cleaned_content if cleaned_content else content
             return ScriptLine(
                 speaker="narrator",
                 emotion="",
-                display_text=text,
-                tts_text="",  # empty = skip TTS
-                raw_text=text,  # preserve for KV-cache-friendly history
+                display_text=content,
+                tts_text=tts_text,  # cleaned = can be voiced via narrator_voice_key
+                raw_text=text,  # preserve LLM original for KV-cache-friendly history
                 state="approved",
             )
+        # Empty after prefix — fall through to pure-action heuristic
 
-        # Parse: 【emotion】content<TTS>（action）
-        emotion_match = re.match(r"^【(.+?)】", text)
-        emotion = emotion_match.group(1) if emotion_match else ""
-        content = re.sub(r"^【.*?】", "", text).strip()
-        if not content:
-            content = text
-
-        # Extract ALL <...> segments (not just the first). A line can contain
-        # multiple TTS segments interleaved with action text, e.g.
-        #   【em】a<T1>（mid）b<T2>  →  tts_text = "T1、T2"
-        # Use [^>]+ (not .+?) so empty <> is dropped and >...< boundaries are
-        # respected. Whitespace-only tags are filtered. Real parenthetical
-        # cleaning happens via the post-join _clean_tts call below, which also
-        # accumulates stripped （） content into the action field.
-        tts_matches = re.findall(r"<([^>]+)>", content)
-        segments = [m for m in tts_matches if m.strip()]
-        tts_text = TTS_JOIN_SEP.join(segments) if segments else content
-        display_text = re.sub(r"<.+?>", "", content).strip()
-
-        # Extract action （...）at end of line — preserve it as a separate field.
-        # Use [^（]* (not .+?) so only the LAST （） group is captured as action,
-        # not a greedy span from the first （. Mid-line （） stays in display_text
-        # (a known latent cosmetic issue, decoupled from the action fix).
-        action = ""
-        action_match = re.search(r"（([^（]*)）$", display_text)
-        if action_match:
-            action = action_match.group(1)
-            display_text = re.sub(r"（[^（]*）$", "", display_text).strip()
-
-        # Defense-in-depth: strip parenthetical action leaked into TTS tag.
-        # LLM sometimes writes "<你够了（摔门）>" — GSV would read the parens aloud.
-        # This is a FORMAT VIOLATION (distinct from the correct trailing-action format).
-        tts_cleaned, stripped_actions = _clean_tts(tts_text)
-        tts_had_action = bool(stripped_actions)
-        if stripped_actions:
-            action = (action + "、" + stripped_actions).strip("、") if action else stripped_actions
-        tts_text = tts_cleaned if tts_cleaned else tts_text
-
-        if not display_text:
-            display_text = text
-            tts_text = text
-
+    # Pure action line: entire content is （...）with no dialogue.
+    # LLM sometimes splits actions onto separate lines when batch_size > 1.
+    # Treat as narration — no emotion, no TTS.
+    if re.match(r"^（.+?）$", text):
         return ScriptLine(
-            speaker=speaker,
-            emotion=emotion,
-            display_text=display_text,
-            tts_text=tts_text,
-            action=action,
-            raw_text=text,  # preserve LLM original for KV-cache-friendly history
-            tts_had_action=tts_had_action,  # True = parenthetical leaked into TTS tag (violation)
+            speaker="narrator",
+            emotion="",
+            display_text=text,
+            tts_text="",  # empty = skip TTS
+            raw_text=text,  # preserve for KV-cache-friendly history
             state="approved",
         )
+
+    # Parse: 【emotion】content<TTS>（action）
+    emotion_match = re.match(r"^【(.+?)】", text)
+    emotion = emotion_match.group(1) if emotion_match else ""
+    content = re.sub(r"^【.*?】", "", text).strip()
+    if not content:
+        content = text
+
+    # Extract ALL <...> segments (not just the first). A line can contain
+    # multiple TTS segments interleaved with action text, e.g.
+    #   【em】a<T1>（mid）b<T2>  →  tts_text = "T1、T2"
+    # Use [^>]+ (not .+?) so empty <> is dropped and >...< boundaries are
+    # respected. Whitespace-only tags are filtered. Real parenthetical
+    # cleaning happens via the post-join _clean_tts call below, which also
+    # accumulates stripped （） content into the action field.
+    tts_matches = re.findall(r"<([^>]+)>", content)
+    segments = [m for m in tts_matches if m.strip()]
+    tts_text = TTS_JOIN_SEP.join(segments) if segments else content
+    display_text = re.sub(r"<.+?>", "", content).strip()
+
+    # Extract action （...）at end of line — preserve it as a separate field.
+    # Use [^（]* (not .+?) so only the LAST （） group is captured as action,
+    # not a greedy span from the first （. Mid-line （） stays in display_text
+    # (a known latent cosmetic issue, decoupled from the action fix).
+    action = ""
+    action_match = re.search(r"（([^（]*)）$", display_text)
+    if action_match:
+        action = action_match.group(1)
+        display_text = re.sub(r"（[^（]*）$", "", display_text).strip()
+
+    # Defense-in-depth: strip parenthetical action leaked into TTS tag.
+    # LLM sometimes writes "<你够了（摔门）>" — GSV would read the parens aloud.
+    # This is a FORMAT VIOLATION (distinct from the correct trailing-action format).
+    tts_cleaned, stripped_actions = _clean_tts(tts_text)
+    tts_had_action = bool(stripped_actions)
+    if stripped_actions:
+        action = (action + "、" + stripped_actions).strip("、") if action else stripped_actions
+    tts_text = tts_cleaned if tts_cleaned else tts_text
+
+    if not display_text:
+        display_text = text
+        tts_text = text
+
+    return ScriptLine(
+        speaker=speaker,
+        emotion=emotion,
+        display_text=display_text,
+        tts_text=tts_text,
+        action=action,
+        raw_text=text,  # preserve LLM original for KV-cache-friendly history
+        tts_had_action=tts_had_action,  # True = parenthetical leaked into TTS tag (violation)
+        state="approved",
+    )
 
     def _a2d_translate_for_tts(
         self, text: str, speaker: str

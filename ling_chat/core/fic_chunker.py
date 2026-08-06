@@ -154,38 +154,100 @@ class Chunker:
         return [p for p in paragraphs if p.text.strip()]
 
     def _merge_paragraphs(self, paragraphs: List[Chunk]) -> List[Chunk]:
-        """Merge adjacent paragraphs until chunk_max_chars would be exceeded."""
+        """Merge adjacent paragraphs until chunk_max_chars would be exceeded.
+
+        Any paragraph that alone exceeds chunk_max_chars is NOT emitted whole —
+        it is hard-split at Chinese sentence/clause boundaries so the bound is a
+        hard ceiling (B1 fix). Short paragraphs are greedy-merged as before.
+        """
         if not paragraphs:
             return []
 
         merged: List[Chunk] = []
-        buf = paragraphs[0]
+        buf: Chunk | None = None
 
-        for nxt in paragraphs[1:]:
-            candidate = buf.text + "\n\n" + nxt.text
+        for para in paragraphs:
+            if buf is None:
+                buf = para
+                continue
+            candidate = buf.text + "\n\n" + para.text
             if len(candidate) <= self.chunk_max_chars:
                 buf = Chunk(
                     chunk_id=buf.chunk_id,
                     text=candidate,
                     start_line=buf.start_line,
-                    end_line=nxt.end_line,
+                    end_line=para.end_line,
                     stage_name=buf.stage_name,
                 )
             else:
-                merged.append(buf)
-                buf = Chunk(
-                    chunk_id=nxt.chunk_id,
-                    text=nxt.text,
-                    start_line=nxt.start_line,
-                    end_line=nxt.end_line,
-                    stage_name=nxt.stage_name,
-                )
-        merged.append(buf)
+                merged.extend(self._emit_or_split(buf))
+                buf = para
 
-        # Re-id sequentially after merge.
+        if buf is not None:
+            merged.extend(self._emit_or_split(buf))
+
+        # Re-id sequentially after merge/split.
         for i, c in enumerate(merged):
             c.chunk_id = i
         return merged
+
+    def _emit_or_split(self, chunk: Chunk) -> List[Chunk]:
+        """Emit chunk as-is if within bound, else hard-split at sentence boundaries."""
+        if len(chunk.text) <= self.chunk_max_chars:
+            return [chunk]
+        return self._hard_split(chunk)
+
+    # Chinese sentence/clause terminators, longest match first.
+    _SENTENCE_BOUND = re.compile(r"(?<=[。！？；])\s*|(?<=[、，])\s*")
+
+    def _hard_split(self, chunk: Chunk) -> List[Chunk]:
+        """Break an over-long chunk at Chinese sentence/clause boundaries.
+
+        Guarantees each piece is <= chunk_max_chars (falling back to a hard
+        character cut only if a single run-on sentence exceeds the bound).
+        """
+        pieces: List[Chunk] = []
+        parts = [p for p in self._SENTENCE_BOUND.split(chunk.text) if p]
+        base_line = chunk.start_line
+        offset = 0
+        buf = ""
+
+        for part in parts:
+            if not buf:
+                buf = part
+            elif len(buf) + len(part) <= self.chunk_max_chars:
+                buf += part
+            else:
+                pieces.append(self._sub_chunk(chunk, buf, base_line, offset))
+                offset += len(buf)
+                buf = part
+
+        # Last carry — if it alone exceeds the max (run-on), hard-cut by char.
+        if buf:
+            if len(buf) <= self.chunk_max_chars:
+                pieces.append(self._sub_chunk(chunk, buf, base_line, offset))
+            else:
+                for piece in self._char_chop(buf):
+                    pieces.append(self._sub_chunk(chunk, piece, base_line, offset))
+                    offset += len(piece)
+
+        return pieces
+
+    def _char_chop(self, text: str) -> List[str]:
+        """Last-resort hard cut by chunk_max_chars characters."""
+        max_c = self.chunk_max_chars
+        return [text[i : i + max_c] for i in range(0, len(text), max_c)]
+
+    @staticmethod
+    def _sub_chunk(parent: Chunk, text: str, base_line: int, offset: int) -> Chunk:
+        return Chunk(
+            chunk_id=parent.chunk_id,
+            text=text.strip(),
+            start_line=base_line,
+            end_line=parent.end_line,
+            stage_name=parent.stage_name,
+            meta={**parent.meta, "offset": offset},
+        )
 
     # ------------------------------------------------------------------
     # Helpers

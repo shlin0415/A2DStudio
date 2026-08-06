@@ -10,6 +10,7 @@ Later rounds (M2-M4) wire generation / synthesis / evaluation into run().
 from __future__ import annotations
 
 import argparse
+import asyncio
 import json
 import random
 import sys
@@ -17,6 +18,16 @@ from pathlib import Path
 from typing import List, Optional
 
 from ling_chat.core.fic_chunker import Chunk, Chunker
+
+_ASYNC_LOOP: Optional[asyncio.AbstractEventLoop] = None
+
+
+def _run(coro):
+    """Run a coroutine in a persistent event loop (GSV model loading needs a live loop)."""
+    global _ASYNC_LOOP
+    if _ASYNC_LOOP is None or _ASYNC_LOOP.is_closed():
+        _ASYNC_LOOP = asyncio.new_event_loop()
+    return _ASYNC_LOOP.run_until_complete(coro)
 
 
 def _load_text(input_path: Path) -> str:
@@ -46,6 +57,7 @@ def run(
     dry_run: bool,
     chunk_max_chars: int = 3000,
     respect_stage_markers: bool = True,
+    batch_size: int = 1,
 ) -> int:
     """Run the fanfiction-to-script pipeline. Returns exit code."""
     random.seed(seed)
@@ -62,29 +74,57 @@ def run(
         return 0
 
     output_dir.mkdir(parents=True, exist_ok=True)
-    # M2+: generation / synthesis / evaluation wired here.
-    # For now, emit the chunk manifest as a placeholder artifact.
+    return _run(_execute(chunks, output_dir, input_path, seed, batch_size))
+
+
+async def _execute(
+    chunks: List[Chunk],
+    output_dir: Path,
+    input_path: Path,
+    seed: int,
+    batch_size: int,
+) -> int:
+    """Real generation + synthesis loop (M2)."""
+    from ling_chat.core.fic_runtime import FicRuntime
+
+    rt = await FicRuntime.create(batch_size=batch_size)
+    results = []
+
+    for chunk in chunks:
+        # AC-2: inject reference_material with 同人演绎 style.
+        rt.session.update_scene(
+            description="同人演绎", style="同人演绎", material=chunk.text
+        )
+        # AC-3: generate batch_size lines per chunk.
+        for _ in range(batch_size):
+            line = await rt.generate_one(chunk.text)
+            if line is None:
+                break
+            # AC-4: synthesize voice.
+            audio = await rt.synthesize(line) if line.tts_text.strip() else ""
+            results.append(
+                {
+                    "chunk_id": chunk.chunk_id,
+                    "speaker": line.speaker,
+                    "emotion": line.emotion,
+                    "display_text": line.display_text,
+                    "tts_text": line.tts_text,
+                    "action": line.action,
+                    "audio": audio,
+                }
+            )
+
     manifest = {
         "input": str(input_path),
         "seed": seed,
         "chunk_count": len(chunks),
-        "chunks": [
-            {
-                "chunk_id": c.chunk_id,
-                "stage_name": c.stage_name,
-                "start_line": c.start_line,
-                "end_line": c.end_line,
-                "char_count": len(c.text),
-                "text": c.text,
-            }
-            for c in chunks
-        ],
+        "line_count": len(results),
+        "lines": results,
     }
     out = output_dir / "fic_manifest.json"
     out.write_text(json.dumps(manifest, ensure_ascii=False, indent=2), encoding="utf-8")
-    _preview_chunks(chunks)
+    print(f"Generated {len(results)} lines from {len(chunks)} chunks.")
     print(f"Wrote manifest: {out}")
-    print("(M2 generation / M3 evaluation not yet wired — coming in later rounds.)")
     return 0
 
 
@@ -111,6 +151,12 @@ def main(argv: Optional[List[str]] = None) -> int:
         action="store_true",
         help="ignore |<===Stage_N===>| markers and split by paragraph only",
     )
+    p.add_argument(
+        "--batch-size",
+        type=int,
+        default=1,
+        help="lines to generate per chunk; default 1",
+    )
     args = p.parse_args(argv)
 
     if args.chunk_max_chars <= 0:
@@ -123,6 +169,7 @@ def main(argv: Optional[List[str]] = None) -> int:
         dry_run=args.dry_run,
         chunk_max_chars=args.chunk_max_chars,
         respect_stage_markers=not args.no_stage_markers,
+        batch_size=args.batch_size,
     )
 
 
