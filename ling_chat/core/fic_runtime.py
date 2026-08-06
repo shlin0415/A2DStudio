@@ -179,7 +179,10 @@ class FicRuntime:
     _SENTENCE_BOUND = re.compile(r"(?<=[。！？；])\s*")
 
     def _truncate_material(self, material: str) -> str:
-        """Truncate over-long material at the last sentence boundary + marker."""
+        """Truncate over-long material at the last sentence boundary + marker.
+
+        AC-2 negative: logs an operator warning when truncation occurs.
+        """
         if len(material) <= self.MAX_MATERIAL_CHARS:
             return material
         truncated = material[: self.MAX_MATERIAL_CHARS]
@@ -187,6 +190,10 @@ class FicRuntime:
         last = truncated.rfind("。")
         if last > 0:
             truncated = truncated[: last + 1]
+        logger.warning(
+            f"material truncated from {len(material)} to "
+            f"{len(truncated)} chars (marker appended)"
+        )
         return truncated + self._TRUNCATION_MARKER
 
     # ------------------------------------------------------------------
@@ -222,9 +229,19 @@ class FicRuntime:
     _TRUNCATION_MARKER = "[材料已截断]"
 
     async def generate_one(self, material: str) -> Optional[dict]:
-        """Generate one script line from the reference material."""
+        """Generate one script line from the reference material.
+
+        B2 fix: when session.scene_config.reference_material is set (via
+        update_scene), that drives the prompt — making update_scene load-bearing
+        rather than a no-op.
+        """
         if not self.session.characters:
             raise RuntimeError("No characters configured in FicRuntime")
+
+        # B2: prefer the production injection path (update_scene) when set.
+        scene_material = self.session.scene_config.reference_material
+        if scene_material:
+            material = scene_material
         if material is None:
             raise ValueError("material=None — nothing to adapt (AC-2 guard)")
 
@@ -238,7 +255,8 @@ class FicRuntime:
 
         session = self.session
         session.last_raw_llm_response = full_text
-        current_speaker = speaker_ids[0]
+        # AC-3 negative: a line with no valid speaker defaults to narrator.
+        current_speaker = "narrator"
 
         for raw_line in full_text.split("\n"):
             raw_line = raw_line.strip()

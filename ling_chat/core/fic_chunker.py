@@ -240,8 +240,6 @@ class Chunker:
             offset += len(piece)
         return out
 
-        return pieces
-
     def _char_chop(self, text: str) -> List[str]:
         """Last-resort hard cut by chunk_max_chars characters."""
         max_c = self.chunk_max_chars

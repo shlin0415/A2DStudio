@@ -53,6 +53,13 @@ class TestAC2Injection:
         suffix = rt.session.build_scene_prompt_suffix()
         assert "参考材料：一段材料" in suffix
 
+    def test_b2_update_scene_drives_generate_prompt(self):
+        """B2: update_scene's reference_material drives the generation prompt."""
+        rt = _make_runtime()
+        rt.session.update_scene("同人演绎", "同人演绎", "驱动材料XYZ")
+        prompt = rt.build_prompt("驱动材料XYZ", list(rt.session.characters.keys()))
+        assert "驱动材料XYZ" in prompt
+
     def test_material_none_rejected(self):
         rt = _make_runtime()
         with pytest.raises(ValueError):
@@ -65,13 +72,15 @@ class TestAC2Injection:
             asyncio.run(rt.generate_one(None))
 
     def test_oversized_material_truncated_with_marker(self, caplog):
-        """AC-2 negative: material longer than max is truncated + visible marker."""
+        """AC-2 negative: material longer than max is truncated + visible marker + warning."""
         rt = _make_runtime()
         rt.MAX_MATERIAL_CHARS = 100
         long_mat = "哈" * 500
         truncated = rt._truncate_material(long_mat)
         assert rt._TRUNCATION_MARKER in truncated
         assert len(truncated) <= 100 + len(rt._TRUNCATION_MARKER)
+        # warns half of AC-2 negative
+        assert any("truncated" in m for m in caplog.messages)
 
 
 # ---------------------------------------------------------------------------
@@ -125,6 +134,14 @@ class TestAC3Generation:
         assert line is not None
         assert line.speaker == "narrator"
         assert "unmapped speaker" in caplog.text
+
+    def test_no_marker_defaults_to_narrator(self, caplog):
+        """AC-3 negative: line with no speaker marker → narrator (not first char)."""
+        rt = _make_runtime()
+        _mock_llm(rt, ["【高兴】你好<こんにちは>"])  # no speaker marker at all
+        line = asyncio.run(rt.generate_one("材料"))
+        assert line is not None
+        assert line.speaker == "narrator"
 
     def test_garbage_llm_output_returns_none(self):
         rt = _make_runtime()

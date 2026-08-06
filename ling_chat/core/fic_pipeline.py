@@ -135,6 +135,48 @@ async def _execute(
     return 0
 
 
+def run_demo(output_dir: Path, seed: int) -> int:
+    """AC-6 end-to-end demo on the annotated excerpt with accuracy eval."""
+    from ling_chat.core.fic_demo import (
+        emit_playable,
+        evaluate_accuracy,
+        load_ground_truth,
+    )
+
+    random.seed(seed)
+
+    base = Path(__file__).resolve().parents[2]
+    gt_path = base / "tmp/ref-article/ema-hiro-heart-groundtruth.json"
+    fic_path = base / "tmp/ref-article/ema-hiro-heart.md"
+
+    output_dir.mkdir(parents=True, exist_ok=True)
+
+    # Ground-truth excerpt: read the source span lines.
+    gt = load_ground_truth(gt_path)
+    span = gt["source_span"]
+    fic_lines = _load_text(fic_path).split("\n")
+    excerpt = "\n".join(fic_lines[span["start_line"] - 1 : span["end_line"]])
+
+    # Run the pipeline on the excerpt (single chunk, one line per ground-truth line).
+    from ling_chat.core.fic_chunker import Chunker
+
+    chunks = Chunker(chunk_max_chars=3000).split(excerpt)
+    rc, results = _run(_execute(chunks, output_dir, fic_path, seed, batch_size=1))
+    if rc != 0:
+        return rc
+
+    # Evaluate accuracy vs ground truth (AC-6).
+    accuracy = evaluate_accuracy(results, gt)
+    print(f"Speaker accuracy: {accuracy['speaker_accuracy']:.1%}")
+    print(f"Narration/dialogue accuracy: {accuracy['type_accuracy']:.1%}")
+
+    # Emit playable.json (AC-6 artifact).
+    playable_path = output_dir / "playable.json"
+    emit_playable(results, playable_path, topic="ema-hiro-heart-demo")
+    print(f"Wrote playable: {playable_path}")
+    return 0
+
+
 def main(argv: Optional[List[str]] = None) -> int:
     p = argparse.ArgumentParser(
         description="Fanfiction -> A2DStudio script pipeline (offline)."
@@ -164,10 +206,18 @@ def main(argv: Optional[List[str]] = None) -> int:
         default=1,
         help="lines to generate per chunk; default 1",
     )
+    p.add_argument(
+        "--demo",
+        action="store_true",
+        help="run the AC-6 end-to-end demo on the annotated excerpt with accuracy eval",
+    )
     args = p.parse_args(argv)
 
     if args.chunk_max_chars <= 0:
         p.error("--chunk-max-chars must be positive")
+
+    if args.demo:
+        return run_demo(args.output, args.seed)
 
     return run(
         input_path=args.input,
