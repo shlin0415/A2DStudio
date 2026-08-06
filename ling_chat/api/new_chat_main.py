@@ -284,8 +284,6 @@ def _a2d_build_character_configs(ai_service) -> dict:
         if not (char_dir / "settings.yml").exists():
             continue
 
-        folder = char_dir.name
-
         try:
             settings = Function.load_character_settings(char_dir)
         except Exception as e:
