@@ -74,7 +74,8 @@ def run(
         return 0
 
     output_dir.mkdir(parents=True, exist_ok=True)
-    return _run(_execute(chunks, output_dir, input_path, seed, batch_size))
+    rc, _ = _run(_execute(chunks, output_dir, input_path, seed, batch_size))
+    return rc
 
 
 async def _execute(
@@ -83,8 +84,8 @@ async def _execute(
     input_path: Path,
     seed: int,
     batch_size: int,
-) -> int:
-    """Real generation + synthesis loop (M2)."""
+) -> tuple[int, list[dict]]:
+    """Real generation + synthesis loop (M2). Returns (exit_code, results)."""
     from ling_chat.core.fic_runtime import FicRuntime
 
     rt = await FicRuntime.create(batch_size=batch_size)
@@ -132,7 +133,7 @@ async def _execute(
     print(f"Generated {len(results)} lines from {len(chunks)} chunks.")
     print(f"Fidelity overall: {report['overall']}")
     print(f"Wrote manifest: {out}")
-    return 0
+    return 0, results
 
 
 def run_demo(output_dir: Path, seed: int) -> int:
@@ -169,6 +170,14 @@ def run_demo(output_dir: Path, seed: int) -> int:
     accuracy = evaluate_accuracy(results, gt)
     print(f"Speaker accuracy: {accuracy['speaker_accuracy']:.1%}")
     print(f"Narration/dialogue accuracy: {accuracy['type_accuracy']:.1%}")
+
+    # AC-6 positive: assert >= 80% on both axes (distinct exit code on failure).
+    if accuracy["speaker_accuracy"] < 0.8 or accuracy["type_accuracy"] < 0.8:
+        print(
+            f"AC-6 THRESHOLD NOT MET: speaker={accuracy['speaker_accuracy']:.1%}, "
+            f"type={accuracy['type_accuracy']:.1%} (required >= 80%)"
+        )
+        return 2
 
     # Emit playable.json (AC-6 artifact).
     playable_path = output_dir / "playable.json"

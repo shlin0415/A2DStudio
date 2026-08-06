@@ -1,7 +1,9 @@
 """Tests for M4 demo + playable emitter (AC-6)."""
 
+import asyncio
 import json
 from pathlib import Path
+from unittest.mock import patch
 
 import pytest
 
@@ -13,6 +15,7 @@ from ling_chat.core.fic_demo import (
 
 
 GROUND_TRUTH = Path("tmp/ref-article/ema-hiro-heart-groundtruth.json")
+FIC = Path("tmp/ref-article/ema-hiro-heart.md")
 
 
 # ---------------------------------------------------------------------------
@@ -123,3 +126,35 @@ class TestAccuracy:
         assert acc["speaker_accuracy"] == pytest.approx(2 / 3)
         # type: ema=dialogue ok, narrator=narration ok, unknown=dialogue ok
         assert acc["type_accuracy"] == 1.0
+
+
+# ---------------------------------------------------------------------------
+# AC-6 end-to-end demo smoke test (would have caught the B1 crash)
+# ---------------------------------------------------------------------------
+
+
+class TestDemoEndToEnd:
+    @pytest.mark.skipif(
+        not FIC.exists() or not GROUND_TRUTH.exists(),
+        reason="demo fixtures missing",
+    )
+    def test_demo_end_to_end(self, tmp_path: Path):
+        """Run run_demo with a mocked LLM; assert rc == 0 + artifacts written.
+
+        The mock returns a narrator line matching the first ground-truth entry
+        (narrator/narration), so the 1:1 positional alignment hits 100% on the
+        single generated line — exercising the full wiring + threshold gate.
+        """
+        from ling_chat.core.fic_pipeline import run_demo
+
+        async def _fake_call(self, messages):
+            return "旁白：那是一个平凡的早晨。"
+
+        with patch(
+            "ling_chat.core.fic_runtime.FicRuntime._call_llm", _fake_call
+        ):
+            rc = run_demo(tmp_path, seed=42)
+
+        assert rc == 0, f"run_demo exited with rc={rc}"
+        assert (tmp_path / "playable.json").exists()
+        assert (tmp_path / "fic_manifest.json").exists()
