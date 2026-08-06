@@ -349,13 +349,12 @@ class TestMultiSegmentDisplayAndAction:
         line = parse(parser, "【em】a<T1>（mid）b<T2>")
         assert line is not None
 
-    def test_action_mid_and_trailing_preserved_greedy_span(self, parser):
-        """Pre-existing regex captures greedy span from first （ to last ）.
+    def test_action_mid_and_trailing_trailing_only_captured(self, parser):
+        """AC-4#2: multi-segment line with mid-line + trailing （） → only trailing captured.
 
-        DEC-1 defers the mid-line （） leak fix — true trailing-only is out of
-        scope. This test asserts the ACTUAL preserved behavior so the suite
-        exercises the mid+trailing input and pins the value (no sidestepping).
+        The action regex captures only the LAST （） group. Mid-line （） stays
+        in display_text (a known latent cosmetic issue, decoupled from this fix).
         """
         line = parse(parser, "【em】a<T1>（mid）b<T2>（trailing）")
-        # re.search(r"（(.+?)）$", display_text) spans first （ → last ）
-        assert line.action == "mid）b（trailing"
+        assert line.action == "trailing"
+        assert line.display_text == "a（mid）b"

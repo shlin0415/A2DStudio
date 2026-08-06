@@ -933,12 +933,15 @@ class AIService:
         tts_text = TTS_JOIN_SEP.join(segments) if segments else content
         display_text = re.sub(r"<.+?>", "", content).strip()
 
-        # Extract action （...）at end of line — preserve it as a separate field
+        # Extract action （...）at end of line — preserve it as a separate field.
+        # Use [^（]* (not .+?) so only the LAST （） group is captured as action,
+        # not a greedy span from the first （. Mid-line （） stays in display_text
+        # (a known latent cosmetic issue, decoupled from the action fix).
         action = ""
-        action_match = re.search(r"（(.+?)）$", display_text)
+        action_match = re.search(r"（([^（]*)）$", display_text)
         if action_match:
             action = action_match.group(1)
-            display_text = re.sub(r"（.+?）$", "", display_text).strip()
+            display_text = re.sub(r"（[^（]*）$", "", display_text).strip()
 
         # Defense-in-depth: strip parenthetical action leaked into TTS tag.
         # LLM sometimes writes "<你够了（摔门）>" — GSV would read the parens aloud.
