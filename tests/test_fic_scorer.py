@@ -3,7 +3,12 @@
 import pytest
 
 from ling_chat.core.fic_chunker import Chunker
-from ling_chat.core.fic_scorer import EmbeddingScorer, score_chunks
+from ling_chat.core.fic_scorer import (
+    EmbeddingScorer,
+    LLMJudgeScorer,
+    JudgeScore,
+    score_chunks,
+)
 
 
 # ---------------------------------------------------------------------------
@@ -96,3 +101,43 @@ class TestNoCerWer:
         assert "jiwer" not in src, "scorer must not import jiwer"
         # compute_metrics is the CER/WER function in a2d_asr_eval — must not be used here.
         assert "compute_metrics" not in src, "scorer must not use compute_metrics (CER/WER)"
+
+
+# ---------------------------------------------------------------------------
+# LLM-judge scorer (AC-5 positive)
+# ---------------------------------------------------------------------------
+
+
+class TestLLMJudgeScorer:
+    def test_judge_score_validation(self):
+        """JudgeScore clamps to 1-5."""
+        assert JudgeScore(score=9, rationale="x").score == 5
+        assert JudgeScore(score=0, rationale="x").score == 1
+        assert JudgeScore(score=3, rationale="x").score == 3
+
+    def test_judge_returns_structured_score(self, monkeypatch):
+        """Rubric returns 1-5 + rationale on fixed input."""
+
+        class FakeLLM:
+            async def process_message_stream(self, messages):
+                yield '{"score": 4, "rationale": "good fidelity"}'
+
+        scorer = LLMJudgeScorer(llm=FakeLLM())
+        import asyncio
+
+        result = asyncio.run(scorer.score("source text", "generated text"))
+        assert result.score == 4
+        assert "good fidelity" in result.rationale
+
+    def test_judge_malformed_output_coerced(self, monkeypatch):
+        """Malformed LLM output → coerced neutral, not crash."""
+
+        class FakeLLM:
+            async def process_message_stream(self, messages):
+                yield "this is not json at all"
+
+        scorer = LLMJudgeScorer(llm=FakeLLM())
+        import asyncio
+
+        result = asyncio.run(scorer.score("src", "gen"))
+        assert 1 <= result.score <= 5  # coerced, not crashed

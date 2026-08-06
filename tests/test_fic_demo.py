@@ -139,16 +139,29 @@ class TestDemoEndToEnd:
         reason="demo fixtures missing",
     )
     def test_demo_end_to_end(self, tmp_path: Path):
-        """Run run_demo with a mocked LLM; assert rc == 0 + artifacts written.
+        """Run run_demo with a multi-line scripted mock (F2).
 
-        The mock returns a narrator line matching the first ground-truth entry
-        (narrator/narration), so the 1:1 positional alignment hits 100% on the
-        single generated line — exercising the full wiring + threshold gate.
+        The mock emits a sequence matching the ground-truth's alternating
+        narrator/ema/hiro lines, so the >=80% thresholds are meaningful
+        (not trivially 100% from a single line).
         """
         from ling_chat.core.fic_pipeline import run_demo
 
+        # Alternate narrator / ema / hiro to exercise speaker + type matching.
+        RESPONSES = [
+            "旁白：那是一个平凡的早晨。",
+            '{"speaker":"ema"}\n【高兴】希罗，久等了！<久等了！>（跑来）',
+            '{"speaker":"hiro"}\n【害羞】艾玛，今天还算早。<今日は早いね。>',
+            "旁白：两人牵手走在路上。",
+            '{"speaker":"ema"}\n【开心】嘿嘿，不能让希罗酱久等啊。<待たせないね。>',
+            '{"speaker":"hiro"}\n【认真】走吧。<行こう。>（伸手）',
+        ]
+        counter = {"i": 0}
+
         async def _fake_call(self, messages):
-            return "旁白：那是一个平凡的早晨。"
+            idx = counter["i"] % len(RESPONSES)
+            counter["i"] += 1
+            return RESPONSES[idx]
 
         with patch(
             "ling_chat.core.fic_runtime.FicRuntime._call_llm", _fake_call

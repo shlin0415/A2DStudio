@@ -5,17 +5,22 @@ Deliberately does NOT use CER/WER (those measure transcription accuracy,
 which is negatively correlated with adaptation quality — a good paraphrase
 scores high CER but is a good adaptation).
 
-Two scorer backends:
+Scorer backends:
 - EmbeddingScorer: character n-gram TF vectors + cosine similarity (numpy,
-  deterministic, no heavy deps, language-agnostic).
-- LLMJudgeScorer: structured 1-5 rubric score via LLM (optional, heavier).
+  deterministic, no heavy deps, language-agnostic). DEFAULT OFFLINE.
+- MultilingualEmbedderScorer: sentence-transformers paraphrase-multilingual-
+  MiniLM-L12-v2 (the plan-specified embedder) — used when the dep is
+  importable. Falls back to EmbeddingScorer otherwise.
+- LLMJudgeScorer: structured 1-5 rubric score + rationale via LLM.
 """
 
 from __future__ import annotations
 
+import json
 import logging
 import re
 from abc import ABC, abstractmethod
+from dataclasses import dataclass
 from typing import List, Optional
 
 import numpy as np
@@ -29,8 +34,6 @@ logger = logging.getLogger(__name__)
 # ---------------------------------------------------------------------------
 # Normalization (reuse the ASR eval discipline)
 # ---------------------------------------------------------------------------
-# Strip leading/trailing non-voiced punctuation + normalize whitespace so the
-# similarity is on content, not artifacts. Mirrors a2d_asr_eval._strip_artifacts.
 _ARTIFACT_LEADING = re.compile(r"^[.。·・…]+")
 _ARTIFACT_TRAILING = re.compile(r"[.。·・…]+$")
 _WHITESPACE = re.compile(r"\s+")
@@ -54,21 +57,16 @@ class BaseScorer(ABC):
 
 
 # ---------------------------------------------------------------------------
-# Embedding scorer (character n-gram TF + cosine)
+# Embedding scorer (character n-gram TF + cosine) — default offline
 # ---------------------------------------------------------------------------
 class EmbeddingScorer(BaseScorer):
-    """Deterministic character n-gram cosine similarity.
-
-    Language-agnostic (works on zh/ja/en without tokenization), reproducible
-    (no randomness), zero heavy deps (numpy only).
-    """
+    """Deterministic character n-gram cosine similarity."""
 
     def __init__(self, ngram_sizes: tuple = (2, 3), normalize: bool = True) -> None:
         self.ngram_sizes = ngram_sizes
         self.normalize = normalize
 
     def _ngrams(self, text: str) -> dict[str, float]:
-        """Character n-gram term-frequency vector as a dict."""
         if self.normalize:
             text = _normalize(text)
         else:
@@ -76,7 +74,6 @@ class EmbeddingScorer(BaseScorer):
         vec: dict[str, float] = {}
         for n in self.ngram_sizes:
             if len(text) < n:
-                # Whole-text unigram fallback for very short strings.
                 vec[text] = vec.get(text, 0.0) + 1.0
                 continue
             for i in range(len(text) - n + 1):
@@ -97,12 +94,107 @@ class EmbeddingScorer(BaseScorer):
         return float(np.dot(va, vb) / (na * nb))
 
     def score(self, source: str, generated: str) -> float:
-        """Cosine similarity in [0, 1] between source and generated n-gram vectors."""
         s = _normalize(source)
         g = _normalize(generated)
         if not s or not g:
             return 0.0
         return max(0.0, min(1.0, self._cosine(self._ngrams(s), self._ngrams(g))))
+
+
+# ---------------------------------------------------------------------------
+# Multilingual embedder scorer (plan-specified) with graceful fallback
+# ---------------------------------------------------------------------------
+class MultilingualEmbedderScorer(BaseScorer):
+    """Plan-specified multilingual embedder (sentence-transformers).
+
+    Falls back to EmbeddingScorer if the dep is unavailable.
+    """
+
+    def __init__(self, model_name: str = "paraphrase-multilingual-MiniLM-L12-v2") -> None:
+        self.model_name = model_name
+        self._model = None
+        self._fallback = EmbeddingScorer()
+        try:
+            from sentence_transformers import SentenceTransformer
+
+            self._model = SentenceTransformer(model_name)
+        except ImportError:
+            logger.warning(
+                "sentence-transformers unavailable — falling back to "
+                "character-n-gram EmbeddingScorer"
+            )
+
+    def score(self, source: str, generated: str) -> float:
+        if self._model is None:
+            return self._fallback.score(source, generated)
+        try:
+            from sklearn.metrics.pairwise import cosine_similarity
+        except ImportError:
+            return self._fallback.score(source, generated)
+        emb = self._model.encode([_normalize(source), _normalize(generated)])
+        return float(cosine_similarity([emb[0]], [emb[1]])[0][0])
+
+
+def _default_scorer() -> BaseScorer:
+    """Prefer the plan embedder; fall back to n-gram when dep unavailable."""
+    try:
+        import sentence_transformers  # noqa: F401
+
+        return MultilingualEmbedderScorer()
+    except ImportError:
+        return EmbeddingScorer()
+
+
+# ---------------------------------------------------------------------------
+# LLM-judge scorer (AC-5 positive)
+# ---------------------------------------------------------------------------
+@dataclass
+class JudgeScore:
+    score: int  # 1-5
+    rationale: str
+
+    def __post_init__(self) -> None:
+        self.score = max(1, min(5, int(self.score)))
+
+
+class LLMJudgeScorer:
+    """Structured 1-5 rubric score + rationale via LLM."""
+
+    RUBRIC = """Evaluate how faithfully the generated script matches the source.
+Rate 1-5 on EACH axis (then give overall):
+- dialogue fidelity: are original lines preserved or naturally adapted?
+- style preservation: is the tone/voice of the source maintained?
+- character voice: do characters speak consistently with their persona?
+
+Respond in EXACT JSON: {"score": <1-5>, "rationale": "<one sentence>"}"""
+
+    def __init__(self, llm=None) -> None:
+        self._llm = llm
+
+    async def score(self, source: str, generated: str) -> JudgeScore:
+        from ling_chat.core.llm_providers.manager import LLMManager
+
+        llm = self._llm or LLMManager()
+        prompt = (
+            f"{self.RUBRIC}\n\n"
+            f"SOURCE:\n{_normalize(source)}\n\n"
+            f"GENERATED:\n{_normalize(generated)}\n"
+        )
+        messages = [{"role": "user", "content": prompt}]
+        try:
+            full_text = ""
+            async for chunk in llm.process_message_stream(messages):
+                if isinstance(chunk, str):
+                    full_text += chunk
+                elif hasattr(chunk, "content"):
+                    full_text += chunk.content or ""
+                else:
+                    full_text += str(chunk)
+            data = json.loads(full_text.strip())
+            return JudgeScore(score=int(data.get("score", 3)), rationale=str(data.get("rationale", "")))
+        except Exception as exc:  # malformed → coerce, don't crash
+            logger.warning(f"LLM judge parse failed ({exc}); coercing to neutral")
+            return JudgeScore(score=3, rationale=f"parse failed: {exc}")
 
 
 # ---------------------------------------------------------------------------
@@ -112,6 +204,7 @@ def score_chunks(
     chunks: List[Chunk],
     generated_lines: List[dict],
     scorer: Optional[BaseScorer] = None,
+    judge: Optional[LLMJudgeScorer] = None,
 ) -> dict:
     """Score generated lines against their source chunks.
 
@@ -119,7 +212,7 @@ def score_chunks(
     Returns per-chunk + overall aggregate. Chunks with no source span are
     skipped with a warning (AC-5 negative).
     """
-    scorer = scorer or EmbeddingScorer()
+    scorer = scorer or _default_scorer()
 
     by_chunk: dict[int, list[float]] = {}
     for line in generated_lines:
@@ -136,7 +229,7 @@ def score_chunks(
         score = scorer.score(chunk.text, gen_text)
         by_chunk.setdefault(cid, []).append(score)
 
-    def _chunk_info(cid: int) -> dict:
+    def _chunk_info(cid: int) -> tuple[dict, str]:
         c = next((c for c in chunks if c.chunk_id == cid), None)
         return (
             {"start_line": c.start_line, "end_line": c.end_line},
@@ -159,10 +252,11 @@ def score_chunks(
     all_scores = [s for scores in by_chunk.values() for s in scores]
     overall = round(sum(all_scores) / len(all_scores), 4) if all_scores else 0.0
 
-    return {
+    result = {
         "scorer": scorer.__class__.__name__,
         "overall": overall,
         "chunk_count": len(by_chunk),
         "line_count": len(all_scores),
         "per_chunk": per_chunk,
     }
+    return result
