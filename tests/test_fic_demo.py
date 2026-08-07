@@ -176,4 +176,9 @@ class TestDemoEndToEnd:
 
         assert rc == 0, f"run_demo exited with rc={rc}"
         assert (tmp_path / "playable.json").exists()
-        assert (tmp_path / "fic_manifest.json").exists()
+        manifest = json.loads(
+            (tmp_path / "fic_manifest.json").read_text(encoding="utf-8")
+        )
+        assert manifest["line_count"] >= 10, (
+            f"AC-6 requires >=10 alternating lines, got {manifest['line_count']}"
+        )

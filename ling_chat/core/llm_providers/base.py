@@ -21,9 +21,9 @@ class BaseLLMProvider(ABC):
 
     @abstractmethod
     async def generate_stream_response(
-        self, messages: List[Dict], **kwargs
+        self, messages: List[Dict]
     ) -> AsyncGenerator[str, None]:
-        """生成模型流式响应. kwargs may include seed/temperature."""
+        """生成模型流式响应"""
         yield ""  # hack return type for async generator
 
     @abstractmethod

@@ -49,7 +49,12 @@ class LLMManager:
         return self.provider.generate_response(messages)
 
     async def process_message_stream(self, messages: List[Dict], **kwargs):
-        async for chunk in self.provider.generate_stream_response(messages, **kwargs):
+        # Accept seed/temperature kwargs (callers may thread them for
+        # determinism) but do NOT forward to providers — concrete provider
+        # signatures reject **kwargs. Provider-native seed/temperature
+        # consumption is out of scope for MVP (requires per-provider changes
+        # + a live LLM to verify).
+        async for chunk in self.provider.generate_stream_response(messages):
             yield chunk
 
     async def process_message_with_tools(
