@@ -6,6 +6,7 @@ const PROJECT_FORMAT = 'a2d-studio-project'
 const PROJECT_VERSION = 1
 const PROJECT_MANIFEST = 'project.json'
 const AUDIO_PATH_PATTERN = /^assets\/audio\/line-\d{4,}\.wav$/
+const DOWNLOAD_URL_REVOKE_DELAY_MS = 1000
 
 interface ProjectManifest {
   format: typeof PROJECT_FORMAT
@@ -152,7 +153,7 @@ export async function exportA2DProject(): Promise<void> {
   document.body.appendChild(anchor)
   anchor.click()
   document.body.removeChild(anchor)
-  URL.revokeObjectURL(url)
+  window.setTimeout(() => URL.revokeObjectURL(url), DOWNLOAD_URL_REVOKE_DELAY_MS)
 }
 
 export async function importA2DProject(file: File): Promise<ImportResult> {

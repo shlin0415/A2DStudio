@@ -3,7 +3,7 @@ import { createPinia, setActivePinia } from 'pinia'
 import { strFromU8, unzipSync, zipSync } from 'fflate'
 import { useScriptStore, type ScriptLine } from '@/stores/modules/script'
 import { buildExportEnvelope } from '@/composables/useA2DSaveLoad'
-import { packA2DProject, unpackA2DProject } from '@/composables/useA2DProject'
+import { exportA2DProject, packA2DProject, unpackA2DProject } from '@/composables/useA2DProject'
 
 function makeLine(id: string, audioPath: string | null): ScriptLine {
   return {
@@ -68,5 +68,34 @@ describe('A2D project archive', () => {
     expect(result.ok).toBe(true)
     expect(useScriptStore().projectName).toBe('短剧')
     expect(useScriptStore().lines[0].audio_path).toBe('blob:project-audio')
+  })
+
+  it('keeps the exported archive URL alive until the browser can start the download', async () => {
+    const originalCreateObjectURL = Object.getOwnPropertyDescriptor(URL, 'createObjectURL')
+    const originalRevokeObjectURL = Object.getOwnPropertyDescriptor(URL, 'revokeObjectURL')
+    const createObjectURL = vi.fn(() => 'blob:a2d-export')
+    const revokeObjectURL = vi.fn()
+    Object.defineProperty(URL, 'createObjectURL', { configurable: true, value: createObjectURL })
+    Object.defineProperty(URL, 'revokeObjectURL', { configurable: true, value: revokeObjectURL })
+    const click = vi.spyOn(HTMLAnchorElement.prototype, 'click').mockImplementation(() => {})
+    vi.useFakeTimers()
+    useScriptStore().projectName = 'export-lifecycle'
+
+    try {
+      await exportA2DProject()
+
+      expect(click).toHaveBeenCalledOnce()
+      expect(revokeObjectURL).not.toHaveBeenCalled()
+
+      await vi.advanceTimersByTimeAsync(1000)
+      expect(revokeObjectURL).toHaveBeenCalledWith('blob:a2d-export')
+    } finally {
+      vi.useRealTimers()
+      click.mockRestore()
+      if (originalCreateObjectURL) Object.defineProperty(URL, 'createObjectURL', originalCreateObjectURL)
+      else Reflect.deleteProperty(URL, 'createObjectURL')
+      if (originalRevokeObjectURL) Object.defineProperty(URL, 'revokeObjectURL', originalRevokeObjectURL)
+      else Reflect.deleteProperty(URL, 'revokeObjectURL')
+    }
   })
 })
