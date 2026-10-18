@@ -1,4 +1,4 @@
-import { onMounted, onUnmounted } from 'vue'
+import { onMounted, onUnmounted, ref } from 'vue'
 import { useScriptStore } from '@/stores/modules/script'
 import { useGameStore } from '@/stores/modules/game'
 import { useUIStore } from '@/stores/modules/ui/ui'
@@ -9,6 +9,8 @@ import type { GameRole } from '@/stores/modules/game/state'
 // ── Singleton: shared WS across all components ─────────
 let ws: WebSocket | null = null
 let connected = false
+const availableSpeakers = ref<string[]>([])
+const isInitialized = ref(false)
 let audioCtx: AudioContext | null = null
 let bgmNode: OscillatorNode | null = null
 let bgmGain: GainNode | null = null
@@ -234,9 +236,12 @@ export function useA2DWebSocket() {
 
     ws.onopen = () => {
       connected = true
+      isInitialized.value = false
+      availableSpeakers.value = []
       ;(window as any).__a2d_ws_connected = true
       console.log('[A2D] WebSocket connected')
       warmUpAudio()
+      send({ type: 'a2d.initialize', payload: {} })
     }
 
     ws.onmessage = (event) => {
@@ -247,42 +252,47 @@ export function useA2DWebSocket() {
           break
         case 'a2d.characters': {
           const gameStore = useGameStore()
-          const chars = msg.payload?.characters as Record<string, unknown>[]
-          if (chars && chars.length > 0) {
-            gameStore.presentRoleIds = []
-            for (const c of chars) {
-              const roleId = c.roleId as number
-              const scriptRoleKey = (c.script_role_key as string) || ''
-              // Build speaker-to-roleId mapping for emotion propagation
-              if (scriptRoleKey) {
-                speakerToRoleId[scriptRoleKey] = roleId
-              }
-              // Only create if not already present (idempotent on restart)
-              if (!gameStore.gameRoles[roleId]) {
-                gameStore.gameRoles[roleId] = {
-                  roleId,
-                  roleName: (c.roleName as string) || '',
-                  roleSubTitle: (c.roleSubTitle as string) || '',
-                  thinkMessage: (c.thinkMessage as string) || '正在思考中...',
-                  emotion: '正常',
-                  originalEmotion: '正常',
-                  scale: (c.scale as number) || 1.0,
-                  offsetX: (c.offsetX as number) || 0,
-                  offsetY: (c.offsetY as number) || 0,
-                  bubbleTop: (c.bubbleTop as number) || 5,
-                  bubbleLeft: (c.bubbleLeft as number) || 20,
-                  show: true,
-                  clothes: {},
-                  clothesName: 'default',
-                  bodyPart: {},
-                  character_folder: (c.character_folder as string) || '',
-                } as GameRole
-              }
-              gameStore.presentRoleIds.push(roleId)
+          const chars = (msg.payload?.characters || []) as Record<string, unknown>[]
+          gameStore.presentRoleIds = []
+          availableSpeakers.value = chars
+            .map((character) => character.script_role_key)
+            .filter((speaker): speaker is string => typeof speaker === 'string' && speaker.length > 0)
+          for (const c of chars) {
+            const roleId = c.roleId as number
+            const scriptRoleKey = (c.script_role_key as string) || ''
+            if (scriptRoleKey) speakerToRoleId[scriptRoleKey] = roleId
+            if (!gameStore.gameRoles[roleId]) {
+              gameStore.gameRoles[roleId] = {
+                roleId,
+                roleName: (c.roleName as string) || '',
+                roleSubTitle: (c.roleSubTitle as string) || '',
+                thinkMessage: (c.thinkMessage as string) || '正在思考中...',
+                emotion: '正常',
+                originalEmotion: '正常',
+                scale: (c.scale as number) || 1.0,
+                offsetX: (c.offsetX as number) || 0,
+                offsetY: (c.offsetY as number) || 0,
+                bubbleTop: (c.bubbleTop as number) || 5,
+                bubbleLeft: (c.bubbleLeft as number) || 20,
+                show: true,
+                clothes: {},
+                clothesName: 'default',
+                bodyPart: {},
+                character_folder: (c.character_folder as string) || '',
+              } as GameRole
             }
-            console.log('[A2D] characters loaded:', gameStore.presentRoleIds,
-              'speakerToRoleId:', speakerToRoleId)
+            gameStore.presentRoleIds.push(roleId)
           }
+          console.log('[A2D] characters loaded:', gameStore.presentRoleIds,
+            'speakerToRoleId:', speakerToRoleId)
+          break
+        }
+        case 'a2d.initialized': {
+          const speakers = msg.payload?.speakers
+          availableSpeakers.value = Array.isArray(speakers)
+            ? speakers.filter((speaker: unknown): speaker is string => typeof speaker === 'string')
+            : []
+          isInitialized.value = true
           break
         }
         case 'status': {
@@ -309,14 +319,19 @@ export function useA2DWebSocket() {
           const audioPath = msg.payload?.audio_path
           const lineId = (msg.payload?.id as string) || ''
           if (audioPath) {
+            const ttsText = msg.payload?.tts_text
+            if (typeof ttsText === 'string') store.updateLine(lineId, { tts_text: ttsText })
+            store.setAudioPath(lineId, audioPath)
             const url = audioPath.startsWith('/')
               ? `http://${window.location.hostname}:8765${audioPath}`
               : audioPath
             // audio_url: real-usage audio source for ASR eval (trace_hook capture mode)
             emitTrace('ws_tts_ready', { lineId, audio_url: url })
-            emitTrace('audio_queued', { lineId })
-            // Replay isolation: route live TTS to pending queue when replay active.
-            routeLiveAudio(url, lineId, replayActive)
+            if (msg.payload?.auto_play !== false) {
+              emitTrace('audio_queued', { lineId })
+              // Replay isolation: route live TTS to pending queue when replay active.
+              routeLiveAudio(url, lineId, replayActive)
+            }
           }
           break
         }
@@ -331,6 +346,7 @@ export function useA2DWebSocket() {
 
     ws.onclose = () => {
       connected = false
+      isInitialized.value = false
       console.log('[A2D] WebSocket closed')
     }
 
@@ -366,8 +382,8 @@ export function useA2DWebSocket() {
     send({ type: 'a2d.retry', payload: { generation_id: store.generationId } })
   }
 
-  function sendRegenerateTTS(id: string, text: string) {
-    send({ type: 'a2d.regenerate_tts', payload: { id, text } })
+  function sendRegenerateTTS(id: string, text: string, speaker: string, autoPlay = true) {
+    send({ type: 'a2d.regenerate_tts', payload: { id, text, speaker, auto_play: autoPlay } })
   }
 
   /** Log user interaction (click, edit) to backend log file via WS. */
@@ -400,6 +416,7 @@ export function useA2DWebSocket() {
 
   return {
     connect, disconnect,
+    availableSpeakers, isInitialized,
     sendStart, sendContinue, sendRetry, sendRegenerateTTS, sendSetBatchSize,
     logUserAction,
     playNextInQueue,

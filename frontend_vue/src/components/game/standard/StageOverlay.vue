@@ -12,8 +12,7 @@
 -->
 <template>
   <div class="stage-overlay">
-    <!-- Image overlays (static — non-editable in P1). z-index:15 is correct for
-         overlay layers (above GameRolesStage, below GameDialog). -->
+    <!-- Image overlays render above character sprites and below synchronized subtitles. -->
     <img
       v-for="img in visual?.imageOverlays ?? []"
       :key="img.id"
@@ -58,7 +57,7 @@ defineProps<{
   /* P1 (replay): pointer-events pass-through so clicks reach GameRolesStage. */
   pointer-events: none;
   overflow: hidden;
-  z-index: 15;
+  z-index: 11;
 }
 
 .stage-overlay__image {

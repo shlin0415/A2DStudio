@@ -3,7 +3,7 @@
   <ImageAcrossFade
     ref="imageFadeRef"
     class="game-background"
-    :src="uiStore.currentBackground || '@/assets/images/default_bg.webp'"
+    :src="backgroundSrc"
     position="center center"
     object-fit="cover"
     :duration="uiStore.currentBackgroundTransition"
@@ -60,7 +60,8 @@
 </template>
 
 <script setup lang="ts">
-import { ref, watch } from 'vue'
+import { computed, ref, watch } from 'vue'
+import defaultBackground from '@/assets/images/default_bg.webp'
 import { useUIStore } from '../../../stores/modules/ui/ui'
 import ImageAcrossFade from '@/components/ui/ImageAcrossFade.vue'
 import AudioAcrossFade from '@/components/ui/AudioAcrossFade.vue' // 引入组件
@@ -71,6 +72,12 @@ import Snow from './particles/Snow.vue'
 import Fireworks from './particles/Fireworks.vue'
 
 const uiStore = useUIStore()
+const DEFAULT_BACKGROUND_ALIAS = '@/assets/images/default_bg.webp'
+const backgroundSrc = computed(() => {
+  const background = uiStore.currentBackground
+  if (!background || background === DEFAULT_BACKGROUND_ALIAS) return defaultBackground
+  return background
+})
 
 // 背景效果 z-index 应该比其他组件高，否则会被覆盖
 const BACKGROUND_ZINDEX = 114514

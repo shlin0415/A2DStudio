@@ -1,6 +1,6 @@
 <!--
   SubtitleOverlay — displays the current line's display_text synced to replay.
-  Mounted in StageView above GameRolesStage, below GameDialog.
+  Mounted in StageView above character and project visual overlays.
   Reads subtitle text from the replay engine (useA2DReplay.currentSubtitle).
 -->
 <template>

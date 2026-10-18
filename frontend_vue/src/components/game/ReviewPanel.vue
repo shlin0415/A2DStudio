@@ -207,6 +207,7 @@ function handleStart() {
   // Explicit user action = commit any pending import (preview-mode, DEC-1).
   commitImport()
   store.reset()
+  store.setActiveTab('review')
   sendStart({ batchSize: batchSize.value })
 }
 
@@ -234,7 +235,10 @@ function handleContinue() {
 function regenerateTTS() {
   const line = activeLine.value
   if (!line) return
-  sendRegenerateTTS(line.id, editingText.value)
+  store.updateLine(line.id, { display_text: editingText.value, tts_text: editingText.value })
+  store.clearEdited(line.id)
+  userEdited = false
+  sendRegenerateTTS(line.id, editingText.value, line.speaker)
 }
 
 function retry() {

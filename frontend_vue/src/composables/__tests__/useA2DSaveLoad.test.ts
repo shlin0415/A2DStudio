@@ -139,7 +139,7 @@ describe('exportSession', () => {
       expect(env.script.lines[0].id).toBe('l1')
       expect(env.script.phase).toBe('paused')
       expect(env.script.selectedLineId).toBe('l1')
-      expect(env.script.activeTab).toBe('review')
+      expect(env.script.activeTab).toBe('script')
       // v2 whitelist: replay extensions ARE exported (null when unset)
       expect(env.script.lines[0]).toHaveProperty('audio_path', null)
       expect(env.script.lines[0]).toHaveProperty('overlay', null)

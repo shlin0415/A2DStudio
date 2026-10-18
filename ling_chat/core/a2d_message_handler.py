@@ -7,6 +7,7 @@ Each handler is a simple async function keyed by WS message type.
 The WS handler only routes — all A2D logic lives here.
 """
 
+import re
 import traceback
 from typing import Any, Callable, Coroutine
 
@@ -92,8 +93,8 @@ async def _send_a2d_characters(session, send: SendFn) -> list[dict]:
             "script_role_key": role_key,
         })
 
+    await send({"type": "a2d.characters", "payload": {"characters": characters}})
     if characters:
-        await send({"type": "a2d.characters", "payload": {"characters": characters}})
         logger.info(f"A2D: sent {len(characters)} characters to frontend")
 
     return characters
@@ -176,12 +177,17 @@ async def _generate_and_synthesize(ai_service, send: SendFn) -> int:
                         )
 
                 if tts_text:
+                    pl["tts_text"] = tts_text
                     audio_path = await ai_service.a2d_synthesize(
                         pl["id"], tts_text, speaker=speaker
                     )
                     await send({
                         "type": "tts_ready",
-                        "payload": {"id": pl["id"], "audio_path": audio_path},
+                        "payload": {
+                            "id": pl["id"],
+                            "audio_path": audio_path,
+                            "tts_text": tts_text,
+                        },
                     })
                 else:
                     logger.warning(
@@ -220,6 +226,20 @@ async def _generate_and_synthesize(ai_service, send: SendFn) -> int:
 
 
 # ── Message handlers ──────────────────────────────────────
+
+
+@register("a2d.initialize")
+async def _handle_initialize(ai_service, client_id: str, payload: dict, send: SendFn):
+    """Load local speaker and TTS configuration without calling an LLM."""
+    from ling_chat.api.new_chat_main import _a2d_build_character_configs
+
+    session = ai_service.a2d_session
+    session.characters = _a2d_build_character_configs(ai_service)
+    await _send_a2d_characters(session, send)
+    await send({
+        "type": "a2d.initialized",
+        "payload": {"speakers": list(session.characters)},
+    })
 
 
 @register("a2d.start")
@@ -305,8 +325,14 @@ async def _handle_regenerate_tts(ai_service, client_id: str, payload: dict, send
     """
     line_id = payload.get("id", "")
     text = payload.get("text", "")
+    requested_speaker = payload.get("speaker", "")
 
     try:
+        if not isinstance(line_id, str) or not re.fullmatch(r"[A-Za-z0-9_-]{1,128}", line_id):
+            raise ValueError("无效的台词 ID")
+        if not isinstance(text, str) or not text.strip():
+            raise ValueError("语音文本不能为空")
+
         # Look up speaker from script_lines
         speaker = ""
         session = ai_service.a2d_session
@@ -316,11 +342,15 @@ async def _handle_regenerate_tts(ai_service, client_id: str, payload: dict, send
                 speaker = line.speaker
                 target_line = line
                 break
+        if target_line is None:
+            if not isinstance(requested_speaker, str) or requested_speaker not in session.characters:
+                raise ValueError("该说话人没有可用的本地语音配置")
+            speaker = requested_speaker
 
         # Translate if character uses different voice language
         tts_text = text
         cfg = session.characters.get(speaker) if speaker else None
-        if cfg and cfg.voice_language != cfg.display_language:
+        if target_line and cfg and cfg.voice_language != cfg.display_language:
             await send({"type": "status", "payload": {"phase": "translating"}})
             translated = ai_service._a2d_translate_for_tts(text, speaker)  # sync
             if translated:
@@ -336,11 +366,20 @@ async def _handle_regenerate_tts(ai_service, client_id: str, payload: dict, send
                 await send({"type": "status", "payload": {"phase": "paused"}})
                 return
 
+        if target_line:
+            target_line.display_text = text
+            target_line.tts_text = tts_text
+
         await send({"type": "status", "payload": {"phase": "synthesizing"}})
         audio_path = await ai_service.a2d_synthesize(line_id, tts_text, speaker=speaker)
         await send({
             "type": "tts_ready",
-            "payload": {"id": line_id, "audio_path": audio_path},
+            "payload": {
+                "id": line_id,
+                "audio_path": audio_path,
+                "tts_text": tts_text,
+                "auto_play": payload.get("auto_play") is not False,
+            },
         })
         await send({"type": "status", "payload": {"phase": "paused"}})
     except Exception as e:

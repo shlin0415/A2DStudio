@@ -46,7 +46,7 @@ export interface LineOverlay {
 
 export interface ScriptLine {
   id: string
-  speaker: 'ema' | 'hiro' | 'narrator'
+  speaker: string
   emotion?: string
   display_text: string
   tts_text: string
@@ -75,12 +75,13 @@ export type Phase = 'idle' | 'thinking' | 'translating' | 'synthesizing' | 'paus
 export interface ScriptSnapshot {
   version: number
   exportedAt: string
+  projectName?: string
   lines: ScriptLine[]
   phase: Phase
   selectedLineId: string | null
   playingLineId: string | null
   editedText: Record<string, string>
-  activeTab: 'review' | 'event'
+  activeTab: 'script' | 'review' | 'event'
 }
 
 // ── Store ──────────────────────────────────────────
@@ -91,11 +92,12 @@ export const useScriptStore = defineStore('script', () => {
   const phase = ref<Phase>('idle')
   const error = ref<ErrorInfo | null>(null)
   const generationId = ref<string | null>(null)
+  const projectName = ref('未命名剧本')
 
   // Cross-tab editor state
   const selectedLineId = ref<string | null>(null)
   const editedText = ref<Record<string, string>>({})
-  const activeTab = ref<'review' | 'event'>('review')
+  const activeTab = ref<'script' | 'review' | 'event'>('script')
 
   // Batch progress (multi-line generation)
   const batchIndex = ref(0)
@@ -139,6 +141,75 @@ export const useScriptStore = defineStore('script', () => {
     if (normalized.batch_total != null) batchTotal.value = normalized.batch_total
   }
 
+  function createManualLine(speaker: string): ScriptLine {
+    const line: ScriptLine = {
+      id: crypto.randomUUID(),
+      speaker,
+      display_text: '',
+      tts_text: '',
+      index: lines.value.length,
+      audio_path: null,
+      overlay: null,
+      stage_id: '',
+    }
+    lines.value.push(line)
+    currentLine.value = line
+    selectedLineId.value = line.id
+    phase.value = 'paused'
+    activeTab.value = 'script'
+    return line
+  }
+
+  function updateLine(
+    lineId: string,
+    updates: Partial<Pick<ScriptLine, 'speaker' | 'emotion' | 'display_text' | 'tts_text' | 'action'>>,
+  ): void {
+    const line = lines.value.find((candidate) => candidate.id === lineId)
+    if (!line) return
+    const speechChanged = (updates.speaker !== undefined && updates.speaker !== line.speaker)
+      || (updates.display_text !== undefined && updates.display_text !== line.display_text)
+      || (updates.tts_text !== undefined && updates.tts_text !== line.tts_text)
+    Object.assign(line, updates)
+    if (speechChanged) line.audio_path = null
+    if (currentLine.value?.id === lineId) currentLine.value = line
+  }
+
+  function setAudioPath(lineId: string, audioPath: string | null): void {
+    const line = lines.value.find((candidate) => candidate.id === lineId)
+    if (line) line.audio_path = audioPath
+  }
+
+  function removeLine(lineId: string): void {
+    const removedIndex = lines.value.findIndex((line) => line.id === lineId)
+    if (removedIndex < 0) return
+    lines.value.splice(removedIndex, 1)
+    lines.value.forEach((line, index) => { line.index = index })
+    if (selectedLineId.value === lineId) {
+      selectedLineId.value = lines.value[Math.min(removedIndex, lines.value.length - 1)]?.id ?? null
+    }
+    currentLine.value = lines.value[lines.value.length - 1] ?? null
+    phase.value = 'paused'
+  }
+
+  function moveLine(lineId: string, offset: -1 | 1): void {
+    const currentIndex = lines.value.findIndex((line) => line.id === lineId)
+    const nextIndex = currentIndex + offset
+    if (currentIndex < 0 || nextIndex < 0 || nextIndex >= lines.value.length) return
+    const line = lines.value.splice(currentIndex, 1)[0]
+    if (!line) return
+    lines.value.splice(nextIndex, 0, line)
+    lines.value.forEach((item, index) => { item.index = index })
+    currentLine.value = line
+  }
+
+  function setActiveTab(tab: ScriptSnapshot['activeTab']): void {
+    activeTab.value = tab
+  }
+
+  function setProjectName(name: string): void {
+    projectName.value = name
+  }
+
   function setPhase(newPhase: Phase) {
     const oldPhase = phase.value
     phase.value = newPhase
@@ -172,9 +243,10 @@ export const useScriptStore = defineStore('script', () => {
     phase.value = 'idle'
     error.value = null
     generationId.value = null
+    projectName.value = '未命名剧本'
     selectedLineId.value = null
     editedText.value = {}
-    activeTab.value = 'review'
+    activeTab.value = 'script'
     batchIndex.value = 0
     batchTotal.value = 0
     playingLineId.value = null
@@ -186,7 +258,7 @@ export const useScriptStore = defineStore('script', () => {
 
   function selectLine(lineId: string) {
     selectedLineId.value = lineId
-    activeTab.value = 'review'
+    activeTab.value = 'script'
   }
 
   function setEdited(lineId: string, text: string) {
@@ -218,7 +290,8 @@ export const useScriptStore = defineStore('script', () => {
       stage_id: l.stage_id ?? '',
     }))
     editedText.value = snap.editedText || {}
-    activeTab.value = snap.activeTab || 'review'
+    projectName.value = snap.projectName || '未命名剧本'
+    activeTab.value = snap.activeTab || 'script'
     // Both IDs must reference an existing line or be null — otherwise UI indicators dangle.
     const lineIds = new Set(snap.lines.map(l => l.id))
     selectedLineId.value = snap.selectedLineId && lineIds.has(snap.selectedLineId)
@@ -245,11 +318,13 @@ export const useScriptStore = defineStore('script', () => {
   })
 
   return {
-    lines, currentLine, phase, error, generationId,
+    lines, currentLine, phase, error, generationId, projectName,
     selectedLineId, editedText, activeTab, selectedLine, stageMap,
     batchIndex, batchTotal, playingLineId, isAudioPlaying, playingLine,
     isThinking, isTranslating, isSynthesizing, isPaused, hasError, isIdle, isBusy,
-    addLine, setPhase, setError, clearError, reset, setStageMap,
+    addLine, createManualLine, updateLine, setAudioPath, removeLine, moveLine,
+    setActiveTab, setProjectName,
+    setPhase, setError, clearError, reset, setStageMap,
     selectLine, setEdited, clearEdited, commitEdits, importFromSnapshot,
   }
 })

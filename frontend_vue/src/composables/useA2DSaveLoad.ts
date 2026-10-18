@@ -63,6 +63,7 @@ function buildScriptSnapshot(script: ReturnType<typeof useScriptStore>) {
   return {
     version: SNAPSHOT_VERSION,
     exportedAt: new Date().toISOString(),
+    projectName: script.projectName,
     lines: script.lines,
     phase: script.phase,
     selectedLineId: script.selectedLineId,
@@ -72,11 +73,11 @@ function buildScriptSnapshot(script: ReturnType<typeof useScriptStore>) {
   }
 }
 
-export function exportSession() {
+export function buildExportEnvelope(): ExportEnvelope {
   const script = useScriptStore()
   const game = useGameStore()
 
-  const envelope: ExportEnvelope = {
+  return {
     version: SNAPSHOT_VERSION,
     exportedAt: new Date().toISOString(),
     script: buildScriptSnapshot(script),
@@ -87,6 +88,10 @@ export function exportSession() {
     // stages[] carries stage_id -> default_background for replay background resolution.
     stages: Object.entries(script.stageMap).map(([id, default_background]) => ({ id, default_background })),
   }
+}
+
+export function exportSession() {
+  const envelope = buildExportEnvelope()
 
   // Option B persistence: send envelope to backend to copy WAVs into a
   // per-save audio dir + rewrite audio_paths to the persistent route.

@@ -131,8 +131,14 @@ class WebLLMProvider(BaseLLMProvider):
             stream = await self.async_client.chat.completions.create(**create_kwargs)
 
             async for chunk in stream:
-                if chunk.choices[0].delta.content is not None:
-                    yield chunk.choices[0].delta.content
+                # OpenAI-compatible streams may include metadata-only chunks
+                # without a choice or text delta.
+                if not chunk.choices:
+                    continue
+
+                content = chunk.choices[0].delta.content
+                if content is not None:
+                    yield content
 
         except Exception as e:
             logger.error(f"通用网络大模型{self.model_type}流式请求失败: {str(e)}")
