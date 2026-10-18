@@ -1,7 +1,7 @@
 # A2D Studio 后续开发计划
 
 > 调研基准：2026-10-12\
-> 最近更新：2026-10-18（补充真实浏览器 ZIP 下载/重开核验与导出修复）\
+> 最近更新：2026-10-18（补充四服务同 run 的双 GSV 与 ZIP 往返验收及远端 SHA）\
 > 目的：收敛产品目标、整理项目现状，并给出可验证的下一步。
 > 状态：路线建议；不是 Rust 重写或大规模删档的执行授权。
 
@@ -41,11 +41,11 @@ A2D Studio 应从“持续跟随 LingChat 分支改动的 fork”收敛为“以
 - A2D 并非从零开始：已有 `StageView.vue`、剧本/审核界面、A2D WebSocket、存档和回放 composable、后端 A2D API、GSV adapter，以及一批 A2D 回归测试。动手重写前需要先把这些实现分成“可复用、已坏、过时”三类。
 - **Stage 的旧聊天叠层已在本轮改动中移除。** 当前 `StageView.vue` 使用共享的 `GameBackground` / `GameRolesStage` 作为视觉层，挂载 A2D 的 `StageOverlay`、`SubtitleOverlay` 和剧本面板，不再挂载旧 `GameDialog` 或 `scriptHandler.sendMessage` 聊天输入路径。浏览器 `/stage` 快照没有显示 Lovely You/Bilibili 占位、旧聊天操作或输入框；背景图已正常显示。专注播放入口只进入舞台，不自动开始播放，用户按“播放”后才从选中句开始。依据：当前 `frontend_vue/src/views/StageView.vue`、`frontend_vue/src/components/game/ScriptPanel.vue`、浏览器状态和截图（2026-10-18）。共享角色/背景组件仍来自 LingChat，应视为可复用视觉层，不等于整页已经脱离上游。
 - 8 月还出现了 `fic_*` 同人文分块、生成、评分和可播放输出流程。它可能服务于“自动 CP 内容创作”，但需要按原始用户流程验收，不能因为已有代码就默认它是核心，也不应在路线收敛前继续扩成独立产品线。
-- 根目录 `start.bat` 仍是旧入口；当前工作树另有 `start-a2d-studio.bat`、`stop-a2d-studio.bat` 和 `scripts/a2d-studio-local.ps1`。运行批次 `20261018-204435-9b81c57e` 从四个端口空闲状态通过预检启动，GSV1/GSV2/backend/frontend 均就绪并分别写日志；停止脚本随后将四个服务状态记为 stopped，PID 全部退出，31801/31802/8765/5173 无监听。这个运行批次的启动/停止和端口释放通过；项目保存/导出仍需单独验收。
+- 根目录 `start.bat` 仍是旧入口；当前工作树另有 `start-a2d-studio.bat`、`stop-a2d-studio.bat` 和 `scripts/a2d-studio-local.ps1`。运行批次 `20261018-204435-9b81c57e` 已证明四服务独立日志、启动与停止；run `20261018-211959-b389f461` 再从全空端口启动四服务，在同一实例完成双 GSV、顺序播放、ZIP 导出、同包重开及再次播放。停止脚本确认服务状态为 stopped、记录 PID 全部退出，31801/31802/8765/5173/5174 无监听。
 - 原工作树曾为 A2D TTS 方法作用域做过未提交修复；本次隔离发布分支从 fork 实时 `develop` 建立，该基线本身已包含所需方法，故没有搬入无关提交。2026-10-18 分别启动前端、Python 后端（`--nogui`）和 GSV1/GSV2 后，健康入口均返回 HTTP 200；从前端 Vite 代理完成 WebSocket ping/pong；通过实际 A2D `a2d.regenerate_tts` 分发器和 `AIService.a2d_synthesize`，艾玛/希罗分别调用配置的 GSV 服务并生成有效 WAV，两个 `/tts` 均返回 200（2.80 秒、3.30 秒）。此项没有调用在线 LLM。
 - 2026-10-18 后续从启动器预检通过的服务状态完成了两位说话人的直接手动合成：GSV1/GSV2 各请求一次，后端回传 WAV，手动路径 `llm_translate=0` 且 `auto_play=false`。浏览器按选中第一句播放后，日志依次出现艾玛 `audio_start`、`audio_end`，再出现希罗 `audio_start`、`audio_end`，最后 `audio_queue_empty`；页面字幕先后对应两句。该 run 证明真实双 GSV 合成和顺序播放。
-- 真实浏览器导出验收发现 `exportA2DProject()` 在 `anchor.click()` 后立即撤销 Blob URL；CDP 先记录下载取消、0/755 字节。延迟 1000 ms 释放 URL 后，浏览器报告 `completed`、752/752 字节，下载文件真实落盘；复制到 `tmp` 的文件 SHA256 与下载原件相同。随后在同一 `/stage` 应用重新打开该导出包，页面恢复项目名、艾玛（GSV1）说话者、台词及已合成状态；进入专注播放不会自动播放，手动点击后显示对应字幕并进入暂停态。该验证使用此前准备的一句样例 ZIP，未在这次候选前端页启动后端/GSV，因此双 GSV 与 ZIP 导出/重开是两个互补 run 的证据，不是同一实例中的一次全链路记录。
-- 项目包当前只包含脚本快照和相对路径 WAV，不包含图片、背景或其他外部素材。`script.lines[].speaker` 保存稳定的 `script_role_key`，本机后端用该 key 查找本地角色/语音配置；导出器不读取本机 `.env` 或本地语音配置，本次手动样例包未发现密钥字段。移到另一台机器后播放已打包 WAV 不依赖 GSV，但重新合成需要该机器配置同名角色 key。当前 `overlay.gsv_params` 仍是开放字段并随 envelope 保存，最终项目格式需明确允许字段，避免未来把本机设置或路径放进分享包。
+- 真实浏览器导出验收发现 `exportA2DProject()` 在 `anchor.click()` 后立即撤销 Blob URL；CDP 先记录下载取消、0/755 字节。延迟 1000 ms 释放 URL 后，Chromium 下载从 752/752 字节小样例到完整项目包均报告 `completed`，文件真实落盘且复制到 `tmp` 的 SHA256 一致。run `20261018-211959-b389f461` 从空端口启动前端、后端、GSV1、GSV2，在同一实例中创建两句手动剧本、各用 GSV1/GSV2 合成一次（两个 `/tts` 均 HTTP 200）、按顺序播放；随后导出 229450 字节 ZIP，复制文件 SHA256 为 `63D694A61A312481F2FD9073234D498D9070E78829518550887E9CBD55CC11FE`，同 run 重开后项目名、`ema`/`hiro`、台词和两条已合成状态恢复，再次按序播放。后端日志有 4 个 `audio_start`、4 个 `audio_end`、2 个 `audio_queue_empty`，LLM 调用标记为 0。停止脚本将四服务状态记为 stopped；31801/31802/8765/5173/5174 无监听，记录的服务 PID 全部退出。
+- 项目包包含脚本快照和相对路径 WAV，不包含图片、背景或其他外部素材。全链路 ZIP 内有 `assets/audio/line-0001.wav`（194604 字节）及 `line-0002.wav`（305964 字节），清单中 speaker 为稳定的 `script_role_key`（`ema`/`hiro`），本机后端用它查找角色/语音配置；导出器不读取本机 `.env` 或本地语音配置，本次包未发现密钥字段名。移到另一台机器后播放已打包 WAV 不依赖 GSV，但重新合成需要该机器配置同名角色 key。当前 `overlay.gsv_params` 仍是开放字段并随 envelope 保存，最终项目格式需明确允许字段，避免未来把本机设置或路径放进分享包。
 - 导出修复后，前端 100 项通过，Vite 生产构建通过；类型检查仍有 6 个仅位于未修改 LingChat 文件的既有错误（`SettingsOthers.vue`、`MainChat.vue`、`volumeNormalizer.ts`）。
 
 ### 文档和历史负担
@@ -255,9 +255,9 @@ A2D 剧本项目与素材（单一项目格式）
 - [x] 2026-10-18 在 run `20261018-204435-9b81c57e` 从空闲端口启动前后端与双 GSV，确认分服务日志和四服务 ready；停止脚本运行后 PID 全部退出、31801/31802/8765/5173 无监听。
 - [x] 2026-10-18 修复应用导出：CDP 先确认同步 revoke 导致下载 0/755 字节 canceled；延迟 1000 ms 后浏览器下载 `a2d-export-roundtrip-20261018-fixed.a2d.zip`，状态 completed、752/752 字节，真实文件落盘。下载原件与 `tmp/a2d-export-browser-validation-20261018/` 副本 SHA256 一致；用同一 ZIP 在 `/stage` 重开后项目名、艾玛/GSV1、台词与已合成状态恢复，专注模式可手动播放。
 - [x] 2026-10-18 在手动编辑器为艾玛/GSV1 与希罗/GSV2 各合成一句；手动路径不调用 LLM 且不会自动播放。点击专注模式的“播放”后两句按脚本顺序播放，前后端记录 HTTP 206、`audio_start`/`audio_end`/`audio_queue_empty`。
-- [x] 2026-10-18 完成创建/编辑/双 GSV 合成/顺序播放及便携 ZIP 导出重开所需的互补浏览器验收；ZIP 中的 `speaker` 是稳定 `script_role_key`，重开后仍引用同一角色，本机语音配置负责解析该 key。导出器不收集 `.env`/本地语音配置，本次手动包未发现密钥字段；开放的 `overlay.gsv_params` 仍需在最终格式约束字段。图片/背景不在当前 ZIP 范围内，跨机器重新合成需配置相同的角色 key；真实 GSV 与导出重开尚未在同一次全新服务 run 中串联。
+- [x] 2026-10-18 在全新四服务 run `20261018-211959-b389f461` 中串联创建/编辑、GSV1/GSV2 各合成一句、按序播放、应用 ZIP 导出、同包重开及再次播放。ZIP 为 229450 字节，SHA256 `63D694A61A312481F2FD9073234D498D9070E78829518550887E9CBD55CC11FE`；包含两条 WAV，分别为 194604/305964 字节，`speaker` 使用稳定 `script_role_key`。项目导出不收集 `.env`/本地语音配置，本次包未发现密钥字段；后端日志有 4 个 `audio_start`、4 个 `audio_end`、2 个 `audio_queue_empty`，LLM 调用标记为 0。开放的 `overlay.gsv_params` 仍需在最终格式约束字段；图片/背景不在当前 ZIP 范围，跨机器重新合成仍需配置相同角色 key。启动器停止后四服务均停止且目标端口释放。
 - [x] 2026-10-18 刷新 `ref/lingchat-latest/main` 为官方 v0.5.2/main `848fd3448c20ca32e0436a498d20e85f63393e7f` 干净参考快照；保留旧 Python/Rust 快照和 `rust-dev` 的 4 个图标本地修改。记录见 `ref/lingchat-latest/UPSTREAM-STATUS.md`；未合并上游代码。
-- [x] 2026-10-18 从 fork 的 `develop=54082b23ea48d2bdb7dc0bb3b355f1ff02228805` 建立隔离分支，审阅并只发布本次 A2D 手动创作基线；排除原工作树另外 9 个 `fic_*`/DB 提交。前端 99 项、后端 6 项、生产构建通过，FIC 测试因可能触发在线服务而未执行；类型检查遗留 6 个未修改文件既有错误。分支 `codex/a2d-manual-baseline-20261018` 的提交 `e4a27d909f3cc9e5242ff967e2f3dd80f91b5880` 已推送并核对远端 SHA 一致。
+- [x] 2026-10-18 从 fork 的 `develop=54082b23ea48d2bdb7dc0bb3b355f1ff02228805` 建立隔离分支，审阅并只发布本次 A2D 手动创作基线；排除原工作树另外 9 个 `fic_*`/DB 提交。基线提交 `e4a27d909f3cc9e5242ff967e2f3dd80f91b5880` 与导出修复提交 `daac22a4e86eb18a0e2eacc246d86b500577f433` 已推送至 `codex/a2d-manual-baseline-20261018`；每次推送后只读核对远端 SHA 一致，无 force-push 或 PR。前端 100 项和生产构建通过；类型检查遗留 6 个未修改 LingChat 文件既有错误，FIC 测试因可能触发在线服务而未执行。
 - [x] 已新增 ZIP v1 项目容器；前端单测验证 envelope v2、相对音频文件和本机配置不进入包，浏览器实际导出 752 字节后落盘并用同一文件重开成功。当前 ZIP 不包括图片/背景素材，最终格式仍需阶段 2 收敛。
 - [x] 2026-10-18 用浏览器导入并播放过的 ZIP 样例对照官方 Rust `main` 固定 SHA `848fd3448c20ca32e0436a498d20e85f63393e7f`；源码确认其编辑器读写 YAML 游戏剧本目录、未发现 A2D ZIP 合约，且 GSV endpoint 为全局单个地址。按当前已验证功能选择 Python/Vue 作为 A2D 唯一实现底座；这是源码级有限比较，未运行 Rust/Tauri 应用。
 - [x] 当前里程碑只保留 Python/Vue 一条 A2D 路线；Rust 留作独立参考，不开双后端或整仓迁移。阶段 2 项目格式、图片/背景资源范围和后续跨设备语音配置策略仍需继续收敛；阶段 4 的应用 ZIP 下载与同文件重开已验证。
@@ -268,4 +268,4 @@ A2D 剧本项目与素材（单一项目格式）
 - MVP 设计历史：`experience/plan-mvp-after-stage14.md`（2026-06-22）。这是历史方案，须对照现代码核验，不能视为已完成事实。
 - Rust 迁移前期体验和环境差异：`experience/exp-spec-plan-LingChat-try-launch-stage1.md`（2026-05-29 至 2026-05-30）。只作为时间点材料。
 - 上游版本状态、编辑器和 TTS 合约：官方 [Releases](https://github.com/SlimeBoyOwO/LingChat/releases)、[Pull Requests](https://github.com/SlimeBoyOwO/LingChat/pulls) 与本地固定 SHA 源码；重点核对 `docs/script-editor/editor.md`、`src-tauri/src/api/script_editor/commands.rs`、`src-tauri/src/ai_service/game_system/script_engine/events_handler.rs`、`src-tauri/src/config/tts.rs`、`src-tauri/src/ai_service/tts/voice_maker.rs` 和 `src-tauri/src/ai_service/tts/adapters/gsv.rs`。2026-10-18 的同样例检查是源码级评估，不是 Rust/Tauri 构建或运行测试。
-- 本地实现状态：当前代码、启动器、前后端 A2D 合约测试、单测和生产构建均已核对；2026-10-18 从空闲端口启动四服务并完成双 GSV 合成/顺序播放，再停止并确认端口释放。导出修复后前端 100 项和生产构建通过；浏览器真实 ZIP 下载落盘并重开同一文件，音频随项目恢复。类型检查 6 个错误仍只在未修改 LingChat 文件。ZIP 尚未收录图片/背景素材，且双 GSV 与最终 ZIP 往返不是同一轮 run。
+- 本地实现状态：2026-10-18 run `20261018-211959-b389f461` 从空闲端口启动前端、后端、GSV1、GSV2，在同一轮完成手动项目编辑、双路合成、两次顺序播放、应用 ZIP 下载并重开同一包；下载状态为 completed、229450/229450 字节，SHA256 为 `63D694A61A312481F2FD9073234D498D9070E78829518550887E9CBD55CC11FE`。手动路径未调用 LLM；停止后记录 PID 均退出，31801/31802/8765/5173/5174 均无监听。前端 100 项、后端 6 项、生产构建通过；类型检查仍有 6 个只涉及未修改 LingChat 文件的既有错误。ZIP 目前不含图片/背景，`overlay.gsv_params` 的开放字段及跨机器重合成所需角色配置仍是格式边界。
