@@ -19,7 +19,7 @@
 - `frontend_vue/src/composables/useA2DWebSocket.ts` — retain the existing stable `script_role_key` from `a2d.characters` in runtime GameRole objects.
 - `frontend_vue/src/composables/useA2DReplay.ts` — resolve replay roles by stable `scriptRoleKey` before display-name fallback.
 - `frontend_vue/src/components/game/standard/GameRoleAvatar.vue` — render packaged avatar Blob URLs for imported project roles.
-- `frontend_vue/src/composables/__tests__/useA2DProject.test.ts` — export/import, schema, asset closure, v1 rejection, size and path security tests.
+- `frontend_vue/src/composables/__tests__/useA2DProject.test.ts` — export/import, schema, asset closure, v1 rejection, size and path, CRC and size-boundary tests.
 - `ling_chat/api/a2d_project_assets.py` — one read-only route for the configured GSV reference WAV of an active A2D speaker; return bytes without exposing server paths.
 - `ling_chat/api/routes_manager.py` — register the reference-audio route.
 - `tests/test_a2d_project_assets.py` — path-containment and environment-override tests for the pure resolver.
@@ -144,7 +144,7 @@ git commit -m "feat: export referenced A2D project assets"
 
 - [ ] **Step 1: Write failing import tests**
 
-Cover successful restoration of three lines and all bundled media as Blob URLs; strict rejection of v1/unknown format; path traversal, absolute/UNC/URL references, undeclared resources, duplicate normalized ZIP entries, corrupt input, more than 1,024 entries, a 128 MiB entry, over 512 MiB expanded total, over 512 MiB archive, and a `project.json` above 10 MiB. Assert any failed import leaves stores unchanged and revokes all Blob URLs created during that import.
+Cover successful restoration of three lines and all bundled media as Blob URLs; strict rejection of v1/unknown format; path traversal, absolute/UNC/URL references, undeclared resources, duplicate normalized ZIP entries, corrupt input, more than 1,024 entries, a 128 MiB entry, over 512 MiB expanded total, over 512 MiB archive, a corrupted CRC, and a `project.json` above 10 MiB. Exercise the shared byte-accounting helper at exact and over-limit numeric boundaries instead of allocating a 512 MiB test archive. Assert any failed import leaves stores unchanged and revokes all Blob URLs created during that import.
 
 - [ ] **Step 2: Run import tests and confirm v1/full-buffer importer failures**
 
@@ -154,7 +154,7 @@ Expected: FAIL because the current importer accepts v1 and calls full-buffer `un
 
 - [ ] **Step 3: Implement streaming ZIP validation**
 
-Use `File.stream().getReader()` and `fflate` `Unzip` with registered `UnzipInflate`. Count compressed archive bytes, entry count, actual emitted bytes per entry and across the archive while chunks arrive. Normalize and validate each path before accepting it; reject duplicate names, unsupported compression, undeclared resources and limit violations before `importSession`. Collect chunks only after per-entry bounds pass; revoke pending object URLs on any failure.
+Read and validate the bounded ZIP central directory first (entry count and normalized names, CRC32, compressed/uncompressed sizes, and local-header offsets), then use `File.stream().getReader()` and fflate `Unzip` with registered `UnzipInflate`. The installed fflate streaming API does not verify CRC itself, so compute CRC32 over emitted bytes and compare it with the central-directory record. Count compressed archive bytes, entry count, actual emitted bytes per entry and across the archive while chunks arrive. Test the byte-accounting helper with numeric boundaries rather than allocating a 512 MiB fixture. Normalize and validate each path before accepting it; reject duplicate names, unsupported compression, undeclared resources and limit violations before `importSession`. Collect chunks only after per-entry bounds pass; revoke pending object URLs on any failure.
 
 - [ ] **Step 4: Restore a validated project into runtime state**
 
