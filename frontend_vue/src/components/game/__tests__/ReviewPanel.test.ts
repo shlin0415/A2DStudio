@@ -40,8 +40,6 @@ vi.mock('@/composables/useA2DReplay', () => ({
 }))
 
 vi.mock('@/composables/useA2DSaveLoad', () => ({
-  exportSession: vi.fn(),
-  importSession: vi.fn(),
   commitImport: vi.fn(),
 }))
 
@@ -108,6 +106,16 @@ describe('ReviewPanel playback preview', () => {
     await wrapper.get('.diagnostics-button').trigger('click')
 
     expect(mocks.downloadSafeTrace).toHaveBeenCalledOnce()
+  })
+
+  it('does not expose legacy JSON project import or export controls', () => {
+    const store = useScriptStore()
+    store.setPhase('idle')
+
+    const wrapper = mount(ReviewPanel)
+
+    expect(wrapper.find('button[title="导出当前剧本到 .a2d.json"]').exists()).toBe(false)
+    expect(wrapper.find('input[accept=".a2d.json,application/json"]').exists()).toBe(false)
   })
 
   it('records when the generation preview stops showing a line', async () => {
