@@ -67,6 +67,8 @@ export interface ErrorInfo {
   generation_id: string
   retry_count: number
   max_retries: number
+  line_id?: string
+  auto_play?: boolean
 }
 
 export type Phase = 'idle' | 'thinking' | 'translating' | 'synthesizing' | 'paused' | 'error'

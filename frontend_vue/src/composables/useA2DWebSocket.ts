@@ -393,8 +393,17 @@ export function useA2DWebSocket() {
     send({ type: 'a2d.retry', payload: { generation_id: store.generationId } })
   }
 
-  function sendRegenerateTTS(id: string, text: string, speaker: string, autoPlay = true) {
-    send({ type: 'a2d.regenerate_tts', payload: { id, text, speaker, auto_play: autoPlay } })
+  function sendRegenerateTTS(
+    id: string,
+    text: string,
+    speaker: string,
+    autoPlay = true,
+    retryCount = 0,
+  ) {
+    send({
+      type: 'a2d.regenerate_tts',
+      payload: { id, text, speaker, auto_play: autoPlay, retry_count: retryCount },
+    })
   }
 
   /** Log user interaction (click, edit) to backend log file via WS. */

@@ -84,7 +84,7 @@
           class="btn-primary"
           @click="retry"
         >
-          手动重试
+          {{ store.error.error_type === 'tts_error' ? '重试语音合成' : '手动重试' }}
         </button>
         <button
           v-if="store.error.error_type === 'tts_error'"
@@ -269,6 +269,26 @@ function regenerateTTS() {
 }
 
 function retry() {
+  const error = store.error
+  if (!error) return
+
+  if (error.error_type === 'tts_error') {
+    const line = error.line_id
+      ? store.lines.find((candidate) => candidate.id === error.line_id)
+      : undefined
+    if (!line) return
+
+    store.clearError()
+    sendRegenerateTTS(
+      line.id,
+      line.display_text,
+      line.speaker,
+      error.auto_play ?? true,
+      error.retry_count + 1,
+    )
+    return
+  }
+
   store.clearError()
   sendRetry()
 }

@@ -304,7 +304,8 @@ async def _handle_continue(ai_service, client_id: str, payload: dict, send: Send
 async def _handle_retry(ai_service, client_id: str, payload: dict, send: SendFn):
     """Regenerate the last batch after an error."""
     session = ai_service.a2d_session
-    pop_count = max(session.last_batch_count, 1)
+    # Failed batches are already rolled back by _generate_and_synthesize.
+    pop_count = session.last_batch_count
     for _ in range(pop_count):
         if session.script_lines:
             session.script_lines.pop()
@@ -334,6 +335,8 @@ async def _handle_regenerate_tts(ai_service, client_id: str, payload: dict, send
     line_id = payload.get("id", "")
     text = payload.get("text", "")
     requested_speaker = payload.get("speaker", "")
+    retry_count = payload.get("retry_count", 0)
+    auto_play = payload.get("auto_play") is not False
 
     try:
         if not isinstance(line_id, str) or not re.fullmatch(r"[A-Za-z0-9_-]{1,128}", line_id):
@@ -388,7 +391,7 @@ async def _handle_regenerate_tts(ai_service, client_id: str, payload: dict, send
                 "id": line_id,
                 "audio_path": audio_path,
                 "tts_text": tts_text,
-                "auto_play": payload.get("auto_play") is not False,
+                "auto_play": auto_play,
             },
         })
         await send({"type": "status", "payload": {"phase": "paused"}})
@@ -398,10 +401,12 @@ async def _handle_regenerate_tts(ai_service, client_id: str, payload: dict, send
             "type": "error",
             "payload": {
                 "error_type": "tts_error",
+                "line_id": line_id,
+                "auto_play": auto_play,
                 "message": f"TTS synthesis failed: {e}",
                 "detail": traceback.format_exc(),
                 "generation_id": "",
-                "retry_count": 0,
+                "retry_count": retry_count,
                 "max_retries": 1,
             },
         })

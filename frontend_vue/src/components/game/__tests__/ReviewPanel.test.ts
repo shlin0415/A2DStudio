@@ -127,4 +127,35 @@ describe('ReviewPanel playback preview', () => {
     expect(JSON.stringify(mocks.emitTrace.mock.calls)).not.toContain('private dialogue')
     wrapper.unmount()
   })
+
+  it('retries TTS for the failed line without restarting batch generation', async () => {
+    const store = useScriptStore()
+    const line = makeLine('failed-line', '需要合成的句子。', 0)
+    store.addLine(line)
+    store.addLine(makeLine('another-line', '另一句。', 1))
+    store.selectedLineId = 'another-line'
+    store.setError({
+      error_type: 'tts_error',
+      message: 'TTS synthesis failed',
+      detail: '',
+      generation_id: '',
+      retry_count: 0,
+      max_retries: 1,
+      line_id: line.id,
+      auto_play: false,
+    })
+
+    const wrapper = mount(ReviewPanel)
+    await wrapper.get('.error-area .btn-primary').trigger('click')
+
+    expect(mocks.sendRegenerateTTS).toHaveBeenCalledWith(
+      line.id,
+      line.display_text,
+      line.speaker,
+      false,
+      1,
+    )
+    expect(mocks.sendRetry).not.toHaveBeenCalled()
+    expect(store.error).toBeNull()
+  })
 })

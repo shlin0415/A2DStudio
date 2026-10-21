@@ -186,8 +186,8 @@ class TestRetryLastBatchCount:
         assert sr.last_batch_count == 0
 
     @pytest.mark.asyncio
-    async def test_retry_with_zero_last_batch_pops_1(self):
-        """When last_batch_count=0, retry pops at least 1 line."""
+    async def test_retry_with_zero_last_batch_preserves_previous_line(self):
+        """A cleaned failed batch has no lines left to pop on retry."""
         ai_svc = MagicMock()
         sr = make_sr()
         sr.add_line(ScriptLine(speaker="ema", display_text="only"))
@@ -204,7 +204,7 @@ class TestRetryLastBatchCount:
 
             await _handle_retry(ai_svc, "test", {}, noop)
 
-        assert len(sr.script_lines) == 0
+        assert len(sr.script_lines) == 1
 
 
 # ── a2d.user_action ───────────────────────────────────────

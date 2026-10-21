@@ -152,3 +152,49 @@ async def test_initialize_loads_character_configs_without_starting_generation(mo
     assert handled is True
     assert service.a2d_session.characters == {"ema": character_config}
     assert [message["type"] for message in messages] == ["a2d.characters", "a2d.initialized"]
+
+
+@pytest.mark.asyncio
+async def test_regenerate_tts_error_preserves_retry_context():
+    from ling_chat.core.a2d_message_handler import _handle_regenerate_tts
+
+    target_line = SimpleNamespace(
+        id="generated-line-1",
+        speaker="ema",
+        display_text="早上好。",
+        tts_text="早上好。",
+    )
+    service = SimpleNamespace(
+        a2d_session=SimpleNamespace(
+            script_lines=[target_line],
+            characters={"ema": SimpleNamespace(voice_language="zh", display_language="zh")},
+        ),
+        _a2d_translate_for_tts=lambda text, speaker: text,
+    )
+
+    async def synthesize(line_id, text, speaker=""):
+        raise RuntimeError("GSV unavailable")
+
+    service.a2d_synthesize = synthesize
+    messages = []
+
+    async def send(message):
+        messages.append(message)
+
+    await _handle_regenerate_tts(
+        service,
+        "client-1",
+        {
+            "id": "generated-line-1",
+            "text": "更新后的台词。",
+            "speaker": "ema",
+            "auto_play": False,
+            "retry_count": 1,
+        },
+        send,
+    )
+
+    error = next(message for message in messages if message["type"] == "error")
+    assert error["payload"]["line_id"] == "generated-line-1"
+    assert error["payload"]["auto_play"] is False
+    assert error["payload"]["retry_count"] == 1
