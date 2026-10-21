@@ -346,6 +346,25 @@ describe('A2D project v2 export contract', () => {
     await expect(packA2DProject(makeExportEnvelope(), '双人短剧')).rejects.toThrow('hiro')
   })
 
+  it('exports a stage-only background as a declared project resource', async () => {
+    stubProjectAssetFetch()
+    const envelope = makeExportEnvelope()
+    envelope.stages[0]!.default_background = '/api/v1/chat/script/background_file/stage-only.png'
+
+    const archive = await packA2DProject(envelope, '双人短剧')
+    const files = unzipSync(archive)
+    const manifest = JSON.parse(strFromU8(files['project.json']))
+    const stageBackgroundPath = manifest.script.stages[0].default_background
+
+    expect(stageBackgroundPath).toBe('assets/backgrounds/asset-0002.png')
+    expect(manifest.resources).toContainEqual(expect.objectContaining({
+      path: stageBackgroundPath,
+      kind: 'background',
+      media_type: 'image/png',
+    }))
+    expect(Array.from(files[stageBackgroundPath])).toEqual([137, 80, 78, 71, 13, 10, 26, 10, 0])
+  })
+
   it('rejects unregistered Blob URLs for project media', async () => {
     registerImportedProjectAssets(new Map(), [])
     const envelope = makeExportEnvelope()
