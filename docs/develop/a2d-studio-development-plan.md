@@ -305,7 +305,7 @@ A2D 剧本项目与素材（单一项目格式）
 - [x] 2026-10-22 项目目录读写：新增用户选择文件夹保存/打开入口，直接读写 ZIP v2 的 `project.json` 与明确引用资源；打开先验证清单和资源大小，再重建 ZIP 走原导入校验；未自动清理过期文件。目录保存/重开、缺失资源拒绝、普通文件夹覆盖保护和过期资源路径重新生成由 5 项契约测试覆盖。真实浏览器原生文件夹选择器尚未运行。
 - [x] 2026-10-22 音频失效边界：store 回归测试验证语音文本和说话人变化会清除该行音频；语音文本独立于显示台词时，只改显示台词保留语音。核对后端 `a2d_synthesize` 的当前调用只接收文本与说话人，行情绪用于舞台表情而不进入 GSV；情绪到语音的映射与 GSV 参数/参考音频编辑仍未实现。
 - [x] 2026-10-22 前端全量 19 个测试文件、149 项通过，Vite 生产构建通过；真实浏览器原生文件夹选择器尚未运行。`pnpm type-check` 仍仅有 6 个旧 LingChat 类型错误，与新增文件无关。
-- [x] 2026-10-22 当前分支复核：`git diff --check 9cb597ec..HEAD` 干净；前端全量 19 个文件、149 项通过，`pnpm build-only` 通过。新增生成模式集成测试走 `a2d.characters → script_line → tts_ready`，使用真实 `GameRoleAvatar` 和 `ReviewPanel`；下一句已排队时仍显示前句，语音结束后还需等表情动画与气泡转场才切句。`pnpm type-check` 仍只报 6 个既有错误（`SettingsOthers.vue` 两处、`MainChat.vue` 两处、`volumeNormalizer.ts` 两处）。本机 5173/8765/31801/31802 均无监听；打开的 `/studio` 标签不能算实时服务验收。即时 TTS 与重播共用音频队列，真实浏览器 CSS 动画仍待实测。
+- [x] 2026-10-22 当前分支复核：`git diff --check 9cb597ec..HEAD` 干净；前端全量 19 个文件、149 项通过，`pnpm build-only` 通过。新增生成模式集成测试走 `a2d.characters → script_line → tts_ready`，使用真实 `GameRoleAvatar` 和 `ReviewPanel`；下一句已排队时仍显示前句，语音结束后还需等表情动画与气泡转场才切句。`pnpm type-check` 仍只报 6 个既有错误（`SettingsOthers.vue` 两处、`MainChat.vue` 两处、`volumeNormalizer.ts` 两处）。本机 5173/8765/31801/31802 均无监听；打开的 `/studio` 标签不能算实时服务验收。工作树缺少 `.venv` 与相邻 `third_party/GPT-SoVITS`，项目启动器无法从该隔离目录通过预检；未复制依赖或借用另一 checkout 的 `.env`。真实浏览器 CSS 动画与目录迁移仍待可用运行环境验收。
 - [ ] 远端发布待重试：本分支 A2D 改动仍未推送；按配置代理常规 `git push remote-shlin-fork codex/a2d-playback-sync-20261021` 失败，原因是 `127.0.0.1:7897` 无法连接。未改代理、未绕过代理。当前 15 个未提交文件仅为既有角色/剧本 YAML，保持未暂存、未改动。
 
 ## 8. 核对来源
