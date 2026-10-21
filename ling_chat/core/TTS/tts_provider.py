@@ -37,7 +37,7 @@ class TTS:
         self.format = os.environ.get("VOICE_FORMAT", "wav")
 
         self.audio_format = self.format
-        self.temp_dir = Path(os.environ.get("TEMP_VOICE_DIR", temp_path / "data/voice"))
+        self.temp_dir = Path(os.environ.get("TEMP_VOICE_DIR", temp_path / "audio"))
         self.temp_dir.mkdir(parents=True, exist_ok=True)
         self.enable = True  # 初始化时启用
 

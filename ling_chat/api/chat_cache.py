@@ -19,7 +19,7 @@ VOICE_EXTENSIONS = {".wav", ".mp3", ".ogg", ".flac", ".m4a", ".webm", ".weba"}
 def _resolve_voice_cache_dir() -> Path:
     raw_path = os.environ.get("TEMP_VOICE_DIR")
     if not raw_path:
-        return temp_path / "data" / "voice"
+        return temp_path / "audio"
 
     path = Path(raw_path)
     if path.is_absolute():

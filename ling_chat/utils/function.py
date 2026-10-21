@@ -709,7 +709,7 @@ class Function:
         """
         清理所有临时文件
         """
-        temp_dir = Path(os.environ.get("TEMP_VOICE_DIR", temp_path / "data/voice"))
+        temp_dir = Path(os.environ.get("TEMP_VOICE_DIR", temp_path / "audio"))
         self.format = os.environ.get("VOICE_FORMAT", "wav")
 
         for file in temp_dir.glob(f"*.{self.format}"):
