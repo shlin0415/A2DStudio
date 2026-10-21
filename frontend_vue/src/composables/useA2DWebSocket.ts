@@ -272,6 +272,7 @@ export function useA2DWebSocket() {
             if (!gameStore.gameRoles[roleId]) {
               gameStore.gameRoles[roleId] = {
                 roleId,
+                scriptRoleKey,
                 roleName: (c.roleName as string) || '',
                 roleSubTitle: (c.roleSubTitle as string) || '',
                 thinkMessage: (c.thinkMessage as string) || '正在思考中...',
@@ -289,6 +290,7 @@ export function useA2DWebSocket() {
                 character_folder: (c.character_folder as string) || '',
               } as GameRole
             }
+            gameStore.gameRoles[roleId].scriptRoleKey = scriptRoleKey
             gameStore.presentRoleIds.push(roleId)
           }
           console.log('[A2D] characters loaded:', gameStore.presentRoleIds,

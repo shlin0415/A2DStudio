@@ -29,6 +29,8 @@ export interface ScriptInfo {
 
 export interface GameRole {
   roleId: number
+  /** Stable A2D script identity; roleId remains a process-local database id. */
+  scriptRoleKey?: string
   roleName: string
   roleSubTitle: string
   thinkMessage: string

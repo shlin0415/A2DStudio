@@ -40,6 +40,7 @@ import { useGameStore } from '@/stores/modules/game'
 import { useScriptStore } from '@/stores/modules/script'
 import { EMOTION_CONFIG, EMOTION_CONFIG_EMO } from '@/controllers/emotion/config'
 import { beginStageAction, endStageAction, type StageAction } from '@/composables/a2d-stage-actions'
+import { getImportedProjectAvatar } from '@/composables/a2d-project-runtime-assets'
 import type { GameRole } from '@/stores/modules/game/state'
 import TouchAreas from './TouchAreas.vue'
 import ImageAcrossFade from '@/components/ui/ImageAcrossFade.vue'
@@ -115,6 +116,7 @@ const targetAvatarUrl = computed(() => {
 
   const mappedEmotion = EMOTION_CONFIG_EMO[emotion] || '正常'
   if (emotion === 'AI思考') return 'none'
+  if (r.scriptRoleKey) return getImportedProjectAvatar(r.scriptRoleKey, clothesName, mappedEmotion) || 'none'
 
   return `/api/v1/chat/character/get_avatar/${r.roleId}/${mappedEmotion}/${clothesName}`
 })

@@ -2,6 +2,7 @@ import { flushPromises, mount } from '@vue/test-utils'
 import { reactive } from 'vue'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import GameRoleAvatar from '../GameRoleAvatar.vue'
+import { getProjectAvatarRegistryKey, registerImportedProjectAssets } from '@/composables/a2d-project-runtime-assets'
 
 const mocks = vi.hoisted(() => ({
   emitTrace: vi.fn(),
@@ -23,6 +24,7 @@ vi.mock('@/controllers/emotion/config', () => ({
 function makeRole() {
   return reactive({
     roleId: 1,
+    scriptRoleKey: undefined as string | undefined,
     roleName: 'ema',
     roleSubTitle: '',
     thinkMessage: '',
@@ -48,7 +50,8 @@ function mountAvatar(role: ReturnType<typeof makeRole>) {
       stubs: {
         TouchAreas: true,
         ImageAcrossFade: {
-          template: '<div v-bind="$attrs" />',
+          props: ['src'],
+          template: '<div data-testid="avatar-image" :data-src="src" />',
           methods: { waitForLoad: () => Promise.resolve() },
         },
       },
@@ -105,5 +108,21 @@ describe('GameRoleAvatar stage action trace', () => {
     }))
     vi.useRealTimers()
     wrapper.unmount()
+  })
+
+  it('uses the packaged avatar URL for an imported project role', async () => {
+    const role = makeRole()
+    role.scriptRoleKey = 'ema'
+    const avatarUrl = 'blob:project-avatar'
+    const avatarKey = getProjectAvatarRegistryKey('ema', 'default', '正常')
+    registerImportedProjectAssets(new Map([[avatarKey, avatarUrl]]), [])
+
+    const wrapper = mountAvatar(role)
+    await flushPromises()
+
+    expect(wrapper.get('[data-testid="avatar-image"]').attributes('data-src')).toBe(avatarUrl)
+    expect(wrapper.get('[data-testid="avatar-image"]').attributes('data-src')).not.toContain('/api/v1/chat/character/get_avatar/')
+    wrapper.unmount()
+    registerImportedProjectAssets(new Map(), [])
   })
 })

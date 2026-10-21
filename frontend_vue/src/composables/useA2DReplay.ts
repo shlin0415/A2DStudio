@@ -369,6 +369,9 @@ export function useA2DReplay() {
 
   function findRoleIdForSpeaker(speaker: string): number | null {
     for (const role of Object.values(gameStore.gameRoles)) {
+      if (role.scriptRoleKey === speaker) return role.roleId
+    }
+    for (const role of Object.values(gameStore.gameRoles)) {
       if (role.roleName === speaker || String(role.roleId) === speaker) return role.roleId
     }
     return null
