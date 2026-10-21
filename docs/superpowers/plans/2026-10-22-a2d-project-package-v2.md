@@ -20,7 +20,8 @@
 - `frontend_vue/src/composables/useA2DReplay.ts` — resolve replay roles by stable `scriptRoleKey` before display-name fallback.
 - `frontend_vue/src/components/game/standard/GameRoleAvatar.vue` — render packaged avatar Blob URLs for imported project roles.
 - `frontend_vue/src/composables/__tests__/useA2DProject.test.ts` — export/import, schema, asset closure, v1 rejection, size and path, CRC and size-boundary tests.
-- `ling_chat/api/a2d_project_assets.py` — one read-only route for the configured GSV reference WAV of an active A2D speaker; return bytes without exposing server paths.
+- `ling_chat/core/a2d_project_assets.py` — pure configured-reference path resolver with directory containment checks; no service manager or `.env` import.
+- `ling_chat/api/a2d_project_assets.py` — thin read-only route for the configured GSV reference WAV of an active A2D speaker; return bytes without exposing server paths.
 - `ling_chat/api/routes_manager.py` — register the reference-audio route.
 - `tests/test_a2d_project_assets.py` — path-containment and environment-override tests for the pure resolver.
 
@@ -60,13 +61,14 @@ git commit -m "feat: define portable A2D project v2 schema"
 ## Task 2: Resolve configured GSV reference WAVs without exposing paths
 
 **Files:**
+- Create: `ling_chat/core/a2d_project_assets.py`
 - Create: `ling_chat/api/a2d_project_assets.py`
 - Modify: `ling_chat/api/routes_manager.py`
 - Create: `tests/test_a2d_project_assets.py`
 
 - [ ] **Step 1: Write failing resolver tests**
 
-Test `resolve_reference_audio_path(reference_path, character_root, has_environment_override)` with these cases: a WAV below the configured character root succeeds; a path outside the root fails; a missing file fails; and an environment-provided GSV reference fails without including its value in the error.
+Import `resolve_reference_audio_path` from `ling_chat.core.a2d_project_assets` and test `(reference_path, character_root, has_environment_override)` with these cases: a WAV below the configured character root succeeds; a path outside the root fails; a missing file fails; and an environment-provided GSV reference fails without including its value in the error.
 
 - [ ] **Step 2: Run the backend test and confirm the resolver is missing**
 
@@ -76,7 +78,7 @@ Expected: FAIL because the resolver does not exist.
 
 - [ ] **Step 3: Implement the pure containment resolver and read-only route**
 
-The route accepts one speaker key, looks it up only in `service_manager.ai_service.a2d_session.characters`, reads the active GSV adapter's `ref_audio_path`, and checks that it resolves below that speaker's configured `VoiceMaker.character_path`. If `GPT_SOVITS_REF_AUDIO` is non-empty, reject the export without logging or returning the value. Return a WAV `FileResponse`; never accept a filesystem path from the request and never return a path in JSON.
+The pure resolver lives in `ling_chat/core/a2d_project_assets.py` and imports only the standard library. The route accepts one speaker key, looks it up only in `service_manager.ai_service.a2d_session.characters`, reads the active GSV adapter's `ref_audio_path`, and passes it to the resolver with that speaker's configured `VoiceMaker.character_path`. If `GPT_SOVITS_REF_AUDIO` is non-empty, reject the export without logging or returning the value. Return a WAV `FileResponse`; never accept a filesystem path from the request and never return a path in JSON.
 
 - [ ] **Step 4: Run the backend resolver tests**
 
@@ -87,7 +89,7 @@ Expected: all resolver tests pass without starting GSV or reading `.env` content
 - [ ] **Step 5: Commit the backend reference boundary**
 
 ```powershell
-git add ling_chat/api/a2d_project_assets.py ling_chat/api/routes_manager.py tests/test_a2d_project_assets.py
+git add ling_chat/core/a2d_project_assets.py ling_chat/api/a2d_project_assets.py ling_chat/api/routes_manager.py tests/test_a2d_project_assets.py
 git commit -m "feat: expose configured A2D reference audio safely"
 ```
 
