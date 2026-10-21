@@ -1,7 +1,7 @@
 # A2D Studio 后续开发计划
 
 > 调研基准：2026-10-12\
-> 最近更新：2026-10-22（字幕与舞台动作同步诊断；ZIP v2 六类资源 OPFS 往返；目录读写；音频失效边界；LLM 档热切换与环境档初始化；空 choices 流式帧；MiMo→GSV UI 验收；已有行说话人重合成；生产 CSS 与角色组件浏览器验证）\
+> 最近更新：2026-10-22（审核台旧 JSON 入口清理；字幕与舞台动作同步诊断；ZIP v2 六类资源 OPFS 往返；目录读写；音频失效边界；LLM 档热切换与环境档初始化；空 choices 流式帧；MiMo→GSV UI 验收；已有行说话人重合成；生产 CSS 与角色组件浏览器验证）\
 > 目的：收敛产品目标、整理项目现状，并给出可验证的下一步。
 > 状态：路线建议；不是 Rust 重写或大规模删档的执行授权。
 
@@ -356,6 +356,7 @@ A2D 剧本项目与素材（单一项目格式）
 - [x] 2026-10-22 脱敏 trace 浏览器下载落盘（`frontend_vue/tmp/codex-a2d-safe-trace-download-20261022`）：隔离 Vite 配置把 envDir 指向无 `.env` 的临时目录、后端指向未监听的 loopback 端口；在新标签页用纯测试台词触发一个 `user_action` trace，再点击“导出时序诊断”。浏览器下载文件真实出现在 Windows Downloads，85 字节、1 条事件，JSON 仅有 `ts`、`wall`、`event` 字段；没有测试台词、操作目标、音频 URL、API key 或其他敏感字段。浏览器自动化的 download 事件接口未回报事件，但从实际落盘文件核验成功，文件已归档到忽略的 `tmp` 测试目录。没有启动后端、GSV 或 LLM，没有读取 `.env`；隔离 Vite 与新建浏览器标签页已关闭。
 - [x] 2026-10-22 OPFS 六类项目资源目录往返（`frontend_vue/tmp/codex-project-resource-import-20261022`）：使用六类合成素材构建 ZIP v2，在真实浏览器 `navigator.storage.getDirectory()` 返回的 OPFS 句柄上调用生产 `saveA2DProjectToDirectory` 和 `openA2DProjectFromDirectory`。`line_audio`、`background`、`image`、`music`、`reference_audio`、`avatar` 六类文件保存后均与输入 ZIP 对应字节 SHA256 一致；清单 schema 为 2，生产重开返回 `{ok:true}`，项目名、一句剧本和导入立绘均恢复。第一次比较失败是临时夹具把 `assets/...` 路径直接传给只接受单段文件名的 `getFileHandle()`；改为逐层打开子目录后通过，生产源码未修改。测试只用合成素材，未读取 `.env`、启动后端/GSV/LLM，也没有访问用户目录；该证据不代表 Windows 原生文件夹选择器或跨机器迁移已验收。
 - [x] 2026-10-22 A2D 前端聚焦回归复核：从 `frontend_vue/` 使用显式 `vitest.config.ts` 运行项目 ZIP/目录、播放队列、Stage 播放、脱敏 trace、角色动画与剧本 store 共 7 个测试文件，75/75 通过。该配置只使用 jsdom 与 Vue 插件，不加载应用 Vite 配置；未读取 `.env`、启动服务或修改生产代码。
+- [x] 2026-10-22 `/studio` 可见控件去重：盘点 `StageView`、`ScriptPanel`、`ReviewPanel`、`EventTrack`、`ScriptEditorPanel` 的可见按钮与 click handler 后，确认审核台旧 `.a2d.json` 导入/导出重复项目页 ZIP v2/文件夹操作，移除该组控件及其审核台专属处理逻辑；ZIP v2 与文件夹操作仍留在剧本页。TDD 回归先因旧按钮存在而失败，修正后 ReviewPanel/ScriptEditorPanel 2 个文件、10/10 通过。隔离 `/studio` 浏览器使用无 `.env` 的 `envDir` 和未监听 backend 端口 9：剧本页显示 ZIP/文件夹按钮；点击“添加艾玛台词”后计数从 0 变 1；审核台只显示时序诊断、批次数与开始生成，不再出现旧 JSON 操作。没有启动 backend/GSV/LLM、访问用户项目或读取 `.env`。`pnpm run type-check` 仍只有 6 条既有 LingChat 类型错误（SettingsOthers、MainChat、volumeNormalizer），未涉及本次修改文件。
 ## 8. 核对来源
 
 - 产品目标与编辑/播放要求：`human-chat.md:776-820`、`human-chat.md:2221-2279`。
