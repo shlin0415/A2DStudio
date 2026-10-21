@@ -339,6 +339,7 @@ A2D 剧本项目与素材（单一项目格式）
 - [x] 2026-10-22 项目目录保存失败恢复（`a2d-project-directory.test.ts`）：TDD 先让两条回归分别复现“更新清单失败会覆盖旧项目音频”和“新项目清单写入失败后无法重试”。修复后更新清单仍失败时旧项目清单和素材字节保持原样且能重开；新目录写入清单失败会移除本次新建的空清单，重试成功。无 A2D 清单的目录里若目标资源路径已存在，会用唯一新路径保存，保留既有文件。`useA2DProject.test.ts` 与目录测试共 30 项通过；ZIP/目录、播放队列、角色动画和字幕层共 5 个文件 60 项通过；OPFS 真实浏览器往返复验通过。`pnpm type-check` 仍仅报告 6 个既有错误（SettingsOthers.vue、MainChat.vue、volumeNormalizer.ts），未列出本次改动文件。该项不替代任意 Windows 用户目录选择及迁移验收。 |
 
 - [x] 2026-10-22 项目导入角色 ID 回归（`a2d-stage-playback.integration.test.ts`）：先经 A2D WebSocket 建立服务角色 ID `1`，再用 ZIP 导入角色使用的运行时 ID `-1000000` 替换 store，同时保留 `scriptRoleKey=ema`。测试确认表情与气泡动作都关联新运行时 ID；音频结束后仍保留第一句预览，直至两个舞台动作结束才切到下一句。该文件 2 项通过。生产 `useA2DReplay` 每次按当前 `gameRoles[].scriptRoleKey` 查找，不依赖旧 ID map；因此没有改生产逻辑。该测试使用 FakeAudio 且不是完整 `/studio` 浏览器验收。另一次隔离浏览器尝试只呈现静态 harness HTML，未确认模块挂载；已停止 Vite 并关闭隔离页，不能视为页面验收通过。
+- [x] 2026-10-22 角色 ID 回归后的聚焦复测：ZIP 项目、目录安全/往返、A2D replay 集成、Stage 播放集成、角色动画和字幕共 6 个测试文件，62/62 通过。Vitest 使用独立 `vitest.config.ts`，不加载 Vite 服务配置或 `.env`。
 
 ## 8. 核对来源
 
