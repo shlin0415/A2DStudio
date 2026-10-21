@@ -474,6 +474,46 @@ describe('A2D project v2 import contract', () => {
     }
   })
 
+  it('restores a background referenced only by the stage default', async () => {
+    stubProjectAssetFetch()
+    const envelope = makeExportEnvelope()
+    envelope.stages[0]!.default_background = '/api/v1/chat/script/background_file/stage-only.png'
+    const archive = await packA2DProject(envelope, '双人短剧')
+    const originalCreateObjectURL = Object.getOwnPropertyDescriptor(URL, 'createObjectURL')
+    const originalRevokeObjectURL = Object.getOwnPropertyDescriptor(URL, 'revokeObjectURL')
+    const importedBlobs = new Map<string, Blob>()
+    let nextUrl = 0
+    Object.defineProperty(URL, 'createObjectURL', {
+      configurable: true,
+      value: vi.fn((blob: Blob) => {
+        const url = `blob:stage-background-${++nextUrl}`
+        importedBlobs.set(url, blob)
+        return url
+      }),
+    })
+    Object.defineProperty(URL, 'revokeObjectURL', { configurable: true, value: vi.fn() })
+
+    try {
+      const result = await unpackA2DProject(new File([archive], 'stage-only-background.a2d.zip'))
+
+      expect(result.ok).toBe(true)
+      const stageBackgroundUrl = useScriptStore().stageMap['stage-night']
+      const stageBackgroundBlob = importedBlobs.get(stageBackgroundUrl)
+      expect(stageBackgroundUrl).toMatch(/^blob:stage-background-/)
+      expect(stageBackgroundBlob?.type).toBe('image/png')
+      expect(Array.from(new Uint8Array(await stageBackgroundBlob!.arrayBuffer()))).toEqual([
+        137, 80, 78, 71, 13, 10, 26, 10, 0,
+      ])
+      expect(useScriptStore().lines[0]!.overlay?.background).not.toBe(stageBackgroundUrl)
+    } finally {
+      registerImportedProjectAssets(new Map(), [])
+      if (originalCreateObjectURL) Object.defineProperty(URL, 'createObjectURL', originalCreateObjectURL)
+      else Reflect.deleteProperty(URL, 'createObjectURL')
+      if (originalRevokeObjectURL) Object.defineProperty(URL, 'revokeObjectURL', originalRevokeObjectURL)
+      else Reflect.deleteProperty(URL, 'revokeObjectURL')
+    }
+  })
+
   it('rejects a corrupted central-directory CRC before changing stores', async () => {
     const manifest = makeValidV2Manifest()
     const files: Record<string, Uint8Array> = {
