@@ -1,15 +1,20 @@
 import { flushPromises, mount } from '@vue/test-utils'
-import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { createPinia, setActivePinia } from 'pinia'
+import { defineComponent, h } from 'vue'
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import GameRoleAvatar from '@/components/game/standard/GameRoleAvatar.vue'
-import { useGameStore } from '@/stores/modules/game'
-import { useScriptStore, type ScriptLine } from '@/stores/modules/script'
-import { audioQueue } from '@/composables/audio-queue'
-import { _resetReplaySingleton, useA2DReplay } from '@/composables/useA2DReplay'
+import ReviewPanel from '@/components/game/ReviewPanel.vue'
+import { audioQueue, isAudioPlaying } from '@/composables/audio-queue'
 import { _resetStageActions } from '@/composables/a2d-stage-actions'
+import { useA2DWebSocket } from '@/composables/useA2DWebSocket'
+import { useGameStore } from '@/stores/modules/game'
+import { useScriptStore } from '@/stores/modules/script'
 
 const audioEndHandlers: Array<(() => void) | null> = []
 const originalAudio = globalThis.Audio
+const originalWebSocket = globalThis.WebSocket
+let activeSocket: FakeWebSocket | null = null
+const mountedWrappers: Array<{ unmount: () => void }> = []
 
 class FakeAudio {
   src = ''
@@ -28,7 +33,32 @@ class FakeAudio {
   }
 }
 
-function makeLine(id: string, index: number, emotion: string): ScriptLine {
+class FakeWebSocket {
+  static readonly OPEN = 1
+  static readonly CONNECTING = 0
+
+  readonly readyState = FakeWebSocket.OPEN
+  onopen: (() => void) | null = null
+  onmessage: ((event: MessageEvent) => void) | null = null
+  onclose: (() => void) | null = null
+  onerror: ((event: Event) => void) | null = null
+
+  constructor() {
+    activeSocket = this
+  }
+
+  send(): void {}
+  close(): void {
+    this.onclose?.()
+  }
+}
+
+function sendSocketMessage(type: string, payload: Record<string, unknown>): void {
+  if (!activeSocket?.onmessage) throw new Error('WebSocket message handler is not ready')
+  activeSocket.onmessage({ data: JSON.stringify({ type, payload }) } as MessageEvent)
+}
+
+function scriptLine(id: string, index: number, emotion: string): Record<string, unknown> {
   return {
     id,
     speaker: 'ema',
@@ -36,65 +66,59 @@ function makeLine(id: string, index: number, emotion: string): ScriptLine {
     display_text: `字幕 ${id}`,
     tts_text: `语音 ${id}`,
     index,
-    audio_path: `/audio/${id}.wav`,
+    audio_path: null,
     overlay: null,
     stage_id: '',
   }
 }
 
-function makeRole() {
-  return {
-    roleId: 1,
-    scriptRoleKey: 'ema',
-    roleName: 'ema',
-    roleSubTitle: '',
-    thinkMessage: '',
-    emotion: '正常',
-    originalEmotion: '正常',
-    scale: 1,
-    offsetY: 0,
-    offsetX: 0,
-    bubbleTop: 5,
-    bubbleLeft: 20,
-    show: true,
-    clothes: {},
-    clothesName: 'default',
-    bodyPart: {},
-    character_folder: '',
-  }
-}
-
-describe('A2D stage actions hold replay subtitles through the real avatar component', () => {
+describe('A2D generated playback holds preview through the real avatar actions', () => {
   beforeEach(() => {
     setActivePinia(createPinia())
     audioQueue.value = []
+    isAudioPlaying.value = false
     audioEndHandlers.length = 0
-    _resetReplaySingleton()
-    _resetStageActions()
+    activeSocket = null
+    mountedWrappers.length = 0
     globalThis.Audio = FakeAudio as unknown as typeof Audio
+    globalThis.WebSocket = FakeWebSocket as unknown as typeof WebSocket
     vi.spyOn(HTMLMediaElement.prototype, 'play').mockResolvedValue(undefined)
     vi.spyOn(HTMLMediaElement.prototype, 'load').mockImplementation(() => {})
+    vi.spyOn(console, 'log').mockImplementation(() => {})
   })
 
   afterEach(() => {
-    _resetReplaySingleton()
+    mountedWrappers.reverse().forEach((wrapper) => wrapper.unmount())
+    websocketClient?.disconnect()
+    websocketClient = null
     _resetStageActions()
+    audioQueue.value = []
+    isAudioPlaying.value = false
     globalThis.Audio = originalAudio
+    globalThis.WebSocket = originalWebSocket
     vi.useRealTimers()
     vi.restoreAllMocks()
   })
 
-  it('waits for both emotion animation and bubble transition before showing the next line', async () => {
+  let websocketClient: ReturnType<typeof useA2DWebSocket> | null = null
+
+  it('keeps the generated line visible until its audio, emotion animation, and bubble finish', async () => {
     vi.useFakeTimers()
+
+    const WebSocketHarness = defineComponent({
+      setup() {
+        websocketClient = useA2DWebSocket()
+        return () => h('div')
+      },
+    })
+    const socketHarness = mount(WebSocketHarness)
+    mountedWrappers.push(socketHarness)
+    sendSocketMessage('a2d.characters', {
+      characters: [{ roleId: 1, script_role_key: 'ema', roleName: 'ema' }],
+    })
+
     const gameStore = useGameStore()
-    const role = makeRole()
-    gameStore.gameRoles[1] = role
-    gameStore.presentRoleIds = [1]
-
-    const scriptStore = useScriptStore()
-    scriptStore.addLine(makeLine('action-line', 0, '高兴'))
-    scriptStore.addLine(makeLine('next-line', 1, '正常'))
-
+    const role = gameStore.gameRoles[1]!
     const avatar = mount(GameRoleAvatar, {
       props: { role },
       global: {
@@ -108,22 +132,35 @@ describe('A2D stage actions hold replay subtitles through the real avatar compon
         },
       },
     })
+    mountedWrappers.push(avatar)
+    const review = mount(ReviewPanel)
+    mountedWrappers.push(review)
     await flushPromises()
 
-    const replay = useA2DReplay()
-    replay.start(0)
+    const scriptStore = useScriptStore()
+    sendSocketMessage('status', { phase: 'thinking' })
+    sendSocketMessage('script_line', scriptLine('action-line', 0, '高兴'))
+    sendSocketMessage('status', { phase: 'synthesizing' })
+    sendSocketMessage('tts_ready', { id: 'action-line', audio_path: '/audio/action-line.wav' })
     await flushPromises()
     await vi.advanceTimersByTimeAsync(500)
     await flushPromises()
 
+    sendSocketMessage('status', { phase: 'thinking' })
+    sendSocketMessage('script_line', scriptLine('next-line', 1, '正常'))
+    sendSocketMessage('status', { phase: 'synthesizing' })
+    sendSocketMessage('tts_ready', { id: 'next-line', audio_path: '/audio/next-line.wav' })
+    await flushPromises()
+    expect(review.get('.preview-text').text()).toBe('字幕 action-line')
+
     expect(audioEndHandlers[0]).toBeTypeOf('function')
     audioEndHandlers[0]?.()
     await flushPromises()
-    expect(replay.currentSubtitle.value).toBe('字幕 action-line')
+    expect(review.get('.preview-text').text()).toBe('字幕 action-line')
 
     await avatar.get('.happy-bounce').trigger('animationend', { animationName: 'happyBounce' })
     await flushPromises()
-    expect(replay.currentSubtitle.value).toBe('字幕 action-line')
+    expect(review.get('.preview-text').text()).toBe('字幕 action-line')
 
     await vi.advanceTimersByTimeAsync(2000)
     const transitionEnd = new Event('transitionend', { bubbles: true })
@@ -131,10 +168,7 @@ describe('A2D stage actions hold replay subtitles through the real avatar compon
     avatar.get('.bubble').element.dispatchEvent(transitionEnd)
     await flushPromises()
 
-    expect(replay.currentSubtitle.value).toBe('字幕 next-line')
+    expect(review.get('.preview-text').text()).toBe('字幕 next-line')
     expect(scriptStore.playingLineId).toBe('next-line')
-
-    replay.stop()
-    avatar.unmount()
   })
 })
