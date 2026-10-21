@@ -256,7 +256,7 @@ A2D 剧本项目与素材（单一项目格式）
 | 阶段 | 状态 | 尚需处理 |
 |---|---|---|
 | 0 文档入口 | 本轮已补入口，待新 checkout 验收 | README 和开发文档索引已链接本计划及 Windows 启停入口；尚未在新 checkout 验证依赖说明。 |
-| 1 Stage/运行基线 | 两路真实 TTS 顺序播放通过；Stage 全应用实音频与角色动画同场验证仍待完成 | 生成预览回归已修复；音频行等待舞台动画/气泡完成后再推进，无音频行在阅读计时后同样等待动作。新增 `line_complete` 与字幕/动作诊断。三句生成和双 GSV 手动合成/顺序播放分开验证；浏览器时序证明 `audio_end → line_complete → 下一句字幕/音频`。本轮以浏览器独立页挂载真实 `GameRoleAvatar`、生产 CSS 和等待器，使用合成 `audio_end` 观测到动画/气泡全部结束后才记 `line_complete`；但音频结束事件不是实际 `<audio>`，角色/语音也尚未在完整 Stage 同一轮实播。 |
+| 1 Stage/运行基线 | 两路真实 TTS 顺序播放通过；完整 `/studio` Stage 的 GSV 语音与角色动画同场验收仍待完成 | 生成预览回归已修复；音频行等待舞台动画/气泡完成后再推进，无音频行在阅读计时后同样等待动作。新增 `line_complete` 与字幕/动作诊断。三句生成和双 GSV 手动合成/顺序播放分开验证；浏览器时序证明 `audio_end → line_complete → 下一句字幕/音频`。本轮额外在隔离浏览器 harness 中让真实 `HTMLAudioElement` 的静音 WAV `ended` 事件经过生产 `playNextInQueue`，同时挂载生产 `GameRoleAvatar`、CSS 和动作屏障：先结束动画与音频，气泡结束后立即 `line_complete`（总计 2.321 秒）。这不是完整 `/studio` 布局或 GSV 语音验收；未启动 backend/LLM/GSV，也未读取 `.env`。 |
 | 2 A2D 项目格式 | ZIP v2 与项目目录读写已实现；原生选择器调用已见，选择/写入和实物迁移验收待完成 | 编辑器现可将同一 v2 `project.json` 与已引用素材保存到用户选择的文件夹，也可从文件夹重开并复用 ZIP v2 校验器。自动化覆盖资源往返、从源目录打开后保存到另一目录时保留音频字节、缺失素材和覆盖边界。临时浏览器页面已确认保存按钮会调用原生 `showDirectoryPicker`，但系统选择窗口不受当前浏览器自动化界面控制，测试已取消且未写入项目；真实选目录/打开/保存和跨机器迁移仍待验收。 |
 | 3 Rust 评估 | 有限源码评估完成 | 已选择当前 Python/Vue 路线；没有构建/运行 Tauri，设备部署成本和发布许可仍未核验。 |
 | 4 手动创作竖切片 | 基础闭环通过；目录读写已覆盖自动化，原生选择器尚未完成真实读写 | 全新四服务 run 已完成双 GSV、顺序播放和 ZIP 往返；目录保存/重开已有契约覆盖，浏览器侧已确认保存入口触发原生选择器，但尚未选择目录、写出并重开项目，非音频资源迁移也待验；语音文本/说话人变更会失效音频，服务端现按编辑器提交的说话人重合成并更新会话行（回归测试通过）；GSV 参数/参考音频的逐句编辑与失效尚未接入。 |
@@ -329,6 +329,7 @@ A2D 剧本项目与素材（单一项目格式）
 - [x] 2026-10-22 已有台词切换说话人后重合成修正：先添加后端服务 API 回归测试，失败结果确认已有会话行 `ema→hiro` 时服务端仍用旧 `ema`；根因是处理器只在找不到服务端行时读取 payload 的 speaker。修正后对两类请求都校验本机角色配置，并将已有会话行同步为请求说话人。`tests/test_a2d_service_api.py` 6 项通过；前端 `script.test.ts` 与 `ScriptEditorPanel.test.ts` 共 13 项通过，确认前端说话人变化会失效旧音频并按当前行发起合成。测试使用 D 盘 venv、从 C 隔离工作树导入代码，并切断项目 `conftest.py` 的 `.env` 装载；全程未读取密钥。
 - [x] 2026-10-22 生产 CSS 浏览器结束事件烟雾验证（`tmp/a2d-css-event-smoke-20261022`）：本地隔离页加载与 `avatar-animation.css` SHA256 一致的副本，Codex 内嵌浏览器捕获 `happyBounce` `animationend`=634 ms（设定 600 ms）及气泡 `opacity transitionend`=2,334 ms（2,000 ms 显示+300 ms 淡出）。仅证明浏览器对该 CSS 的实际事件时序；不替代完整 Stage 中角色、图片资源及队列的实播验收。临时页已关闭，loopback 静态服务已按启动器/监听子进程/参数/端口核验后停止，5181 已释放。
 - [x] 2026-10-22 实际角色组件浏览器屏障 smoke（`tmp/a2d-avatar-component-smoke-20261022`）：临时 Vite harness 挂载 `GameRoleAvatar.vue`、Pinia store、实际生产 CSS 和 `waitForStageActions`。脚本发出合成 `audio_end` 后观察到 `stage_action_wait(pending=2)`，接着 animation 与 bubble 分别 `completed`，最后才记录 `line_complete`；组件测试页 2,341 ms 完成。没有启动 LLM/GSV、加载 `.env` 或载入项目台词；真实 `<audio>` 与完整 Stage 同轮组合仍待验收。关闭临时浏览器页后按 Vite PID/可执行文件/配置参数/启动时间/监听端口核对并停止，5182 已释放。
+- [x] 2026-10-22 真实媒体事件与舞台动作屏障同场 smoke（`tmp/a2d-audio-animation-barrier-smoke-20261022`）：临时 Vite harness 挂载生产 `GameRoleAvatar.vue`、Pinia store、组件 CSS 与 `playNextInQueue`，点击页面按钮后由真实 `HTMLAudioElement` 播放 80 ms 全静音 PCM WAV。事件顺序为 `audio_start` 566 ms、animation end 1,186 ms、`audio_end` 1,234 ms、bubble end 与 `line_complete` 2,886 ms（总 2,321 ms）；两类动作都在 `line_complete` 前结束。初次尝试发现隔离 harness 未提供组件请求的“喜悦”音效而报 `NotSupportedError`；只在临时目录把该路由映射到同一静音 WAV 后重跑，浏览器错误/警告为 0。未启动 backend/LLM/GSV、未读 `.env`、未加载项目台词或真实语音。该测试证明实际媒体结束事件进入生产队列后，字幕行完成会等待舞台动作；完整 `/studio` 页面/GSV 语音同轮链路仍待验收。
 
 ## 8. 核对来源
 
