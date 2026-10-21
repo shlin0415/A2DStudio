@@ -341,19 +341,21 @@ async def _handle_regenerate_tts(ai_service, client_id: str, payload: dict, send
         if not isinstance(text, str) or not text.strip():
             raise ValueError("语音文本不能为空")
 
-        # Look up speaker from script_lines
-        speaker = ""
         session = ai_service.a2d_session
+        if (
+            not isinstance(requested_speaker, str)
+            or requested_speaker not in session.characters
+        ):
+            raise ValueError("该说话人没有可用的本地语音配置")
+
+        speaker = requested_speaker
         target_line = None
         for line in session.script_lines:
             if line.id == line_id:
-                speaker = line.speaker
                 target_line = line
                 break
-        if target_line is None:
-            if not isinstance(requested_speaker, str) or requested_speaker not in session.characters:
-                raise ValueError("该说话人没有可用的本地语音配置")
-            speaker = requested_speaker
+        if target_line is not None:
+            target_line.speaker = speaker
 
         # Translate if character uses different voice language
         tts_text = text
