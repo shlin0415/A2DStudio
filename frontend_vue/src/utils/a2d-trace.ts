@@ -48,11 +48,18 @@ export interface TraceEntry {
 declare global {
   interface Window {
     __a2dTrace: TraceEntry[]
+    __a2dTraceCaptureSensitive?: boolean
   }
 }
 
 // Survives HMR (Vite dev server) — don't overwrite on module re-eval
 window.__a2dTrace = window.__a2dTrace || []
+if (!window.__a2dTraceCaptureSensitive) {
+  // Remove sensitive fields left by an older module version before normal use resumes.
+  for (let index = 0; index < window.__a2dTrace.length; index += 1) {
+    window.__a2dTrace[index] = sanitizeTraceEntry(window.__a2dTrace[index])
+  }
+}
 
 /** Keep only the fields needed to diagnose ordering and timing. */
 export function sanitizeTraceEntry(entry: TraceEntry): TraceEntry {
@@ -82,9 +89,8 @@ export function emitTrace(event: string, data?: Record<string, unknown>): void {
   if (arr.length >= MAX) {
     arr.splice(0, arr.length - MAX + 1)
   }
-  arr.push(entry)
-  // The page ring retains the full payload for the existing ASR evaluation hook;
-  // the console receives only timing metadata to avoid printing dialogue or paths.
+  arr.push(window.__a2dTraceCaptureSensitive ? entry : sanitizeTraceEntry(entry))
+  // Raw dialogue/audio fields remain in-page only for an explicitly opted-in ASR capture.
   console.info('[A2D-Trace]', JSON.stringify(sanitizeTraceEntry(entry)))
 }
 

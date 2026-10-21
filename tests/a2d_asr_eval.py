@@ -92,6 +92,8 @@ class TraceHookCapture:
             browser = await p.chromium.launch(headless=True)
             page = await browser.new_page()
             try:
+                # Dialogue and audio URLs are sensitive; ordinary page traces omit them.
+                await page.add_init_script("window.__a2dTraceCaptureSensitive = true;")
                 await page.goto(self.stage_url)
                 await page.wait_for_load_state("networkidle", timeout=15000)
 

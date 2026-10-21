@@ -3,6 +3,7 @@ import { dumpTrace, emitTrace, sanitizeTraceEntry } from '../a2d-trace'
 
 describe('A2D timing trace privacy', () => {
   afterEach(() => {
+    window.__a2dTraceCaptureSensitive = false
     dumpTrace()
     vi.restoreAllMocks()
   })
@@ -31,15 +32,51 @@ describe('A2D timing trace privacy', () => {
     expect(JSON.stringify(safe)).not.toContain('must-never-export')
   })
 
-  it('prints a sanitized console entry while retaining the raw page trace for ASR evaluation', () => {
+  it('retains only allow-listed metadata in the normal page trace', () => {
     const consoleInfo = vi.spyOn(console, 'info').mockImplementation(() => {})
 
-    emitTrace('ws_script_line', { lineId: 'line-2', tts_text: 'private dialogue' })
+    emitTrace('ws_script_line', {
+      lineId: 'line-2',
+      tts_text: 'private dialogue',
+      audio_url: 'http://127.0.0.1:8765/audio/private.wav',
+    })
 
     const trace = window.__a2dTrace
-    expect(trace.at(-1)?.data?.tts_text).toBe('private dialogue')
+    expect(trace.at(-1)?.data).toEqual({ lineId: 'line-2' })
+    expect(JSON.stringify(trace)).not.toContain('private dialogue')
+    expect(JSON.stringify(trace)).not.toContain('private.wav')
     expect(JSON.stringify(consoleInfo.mock.calls)).not.toContain('private dialogue')
     expect(JSON.stringify(consoleInfo.mock.calls)).toContain('line-2')
+  })
+
+  it('retains raw trace fields only when sensitive capture is explicitly enabled', () => {
+    window.__a2dTraceCaptureSensitive = true
+
+    emitTrace('ws_script_line', { lineId: 'line-3', tts_text: 'private dialogue' })
+    emitTrace('ws_tts_ready', {
+      lineId: 'line-3',
+      audio_url: 'http://127.0.0.1:8765/audio/private.wav',
+    })
+
+    expect(window.__a2dTrace.at(-2)?.data?.tts_text).toBe('private dialogue')
+    expect(window.__a2dTrace.at(-1)?.data?.audio_url).toBe('http://127.0.0.1:8765/audio/private.wav')
+  })
+
+  it('sanitizes an existing trace buffer when the module reloads without opt-in', async () => {
+    window.__a2dTraceCaptureSensitive = false
+    window.__a2dTrace = [{
+      ts: 1,
+      wall: 2,
+      event: 'ws_script_line',
+      data: { lineId: 'line-old', tts_text: 'private dialogue' },
+    }]
+    const existingBuffer = window.__a2dTrace
+
+    vi.resetModules()
+    await import('../a2d-trace')
+
+    expect(window.__a2dTrace).toBe(existingBuffer)
+    expect(window.__a2dTrace[0]?.data).toEqual({ lineId: 'line-old' })
   })
 
   it('exports line completion with its identifier and no content or resource paths', () => {

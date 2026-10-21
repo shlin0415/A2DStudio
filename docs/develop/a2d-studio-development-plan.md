@@ -268,7 +268,7 @@ A2D 剧本项目与素材（单一项目格式）
 1. **从已推送基线开干净工作区。** 已从 `codex/a2d-manual-baseline-20261018` 的提交 `49c0a23c` 建立隔离分支 `codex/a2d-playback-sync-20261021`。测试数据目录出现全局 `core.autocrlf=true` 与文件 `eol=lf` 造成的行尾差异；这批样例 YAML 未改动，也不会暂存。
 2. **解决生成期间字幕预览跳句（P0，代码回归已修复）。** 后端每句 TTS 后会再次发送 `thinking`，但前端原先每次都清空 `playingLineId` 和 `isAudioPlaying`；下一条 `script_line` 更新 `currentLine` 后，ReviewPanel 忙碌预览因此显示了尚未开始播放的下一句。现在只在新一批从 idle/paused/error 开始时重置批次状态；如上一句仍在播放则保留播放行；ReviewPanel 预览优先播放行，没有播放行时才显示最新生成行。添加了 store 和组件回归测试。
 3. **字幕与舞台动画同步（真实 TTS 顺序播放通过；真实 CSS 动作待验收）。** ReviewPanel 预览继续以当前播放行为准；A2D 播放队列在 TTS `ended` 后等待该行由 `GameRoleAvatar` 发出的有限 CSS 动画和气泡 `transitionend`，再切到下一句。旁白等无音频行在阅读时长结束后也等待动作。等待结束后、推进下一句前记录 `line_complete`；seek/stop 会让旧音频回调失效；暂停期间音频结束则记住待推进状态，恢复后推进。用户确认动作范围是表情/弹跳/气泡等舞台动画，**不含 LLM 括号动作**。前端全量测试已通过；浏览器已用 GSV1/GSV2 完成两句真实顺序播放，并观测到 `audio_end → line_complete → subtitle_hide/show → 下一句 audio_start`。该次测试没有触发角色 CSS 动作；动作屏障目前由前端集成测试验证。
-4. **脱敏时序诊断（代码及白名单测试完成）。** `subtitle_show/hide`、`review_preview`/`review_preview_hide`、`audio_start/end`、`stage_action_start/end/wait`、`line_complete` 使用同一行 ID 和时间戳。下载与浏览器控制台只保留白名单字段，不含台词正文、音频 URL 或本机路径；页面内 `window.__a2dTrace` 仍保留原始 trace，供既有 ASR 自动化使用，下载按钮不会清空它。代码和脱敏测试已验证；本轮未能确认浏览器下载文件的实际落盘位置，后续仍需用一次真实播放确认导出文件可用。
+4. **脱敏时序诊断（默认脱敏，ASR 显式采集）。** `subtitle_show/hide`、`review_preview`/`review_preview_hide`、`audio_start/end`、`stage_action_start/end/wait`、`line_complete` 使用同一行 ID 和时间戳。普通页面的 `window.__a2dTrace`、控制台与下载只保留白名单字段，不留台词正文或音频 URL；既有 buffer 在 HMR 后恢复普通模式时也会原位脱敏。`tests/a2d_asr_eval.py` 只在打开 ASR 评估页前显式开启敏感采集，以取得台词与对应音频 URL。前端测试覆盖普通模式、显式采集和 HMR 清理；真实下载文件落盘位置仍待一次浏览器导出确认。
 5. **提供清楚的 A2D 入口（P1，代码已改）。** A2D 唯一路由已由 `/stage` 改为 `/studio`，应用标题改成 A2D Studio；启动器改为等待 `/studio` ready 后尝试打开默认浏览器。它仍通过 `http://127.0.0.1:5173` 提供服务，所以这是更清楚的产品路径，不是独立域名、桌面壳或完全脱离 LingChat 的部署。
 6. **收敛项目目录和 ZIP 的单一格式（P2，ZIP v2 与目录读写代码已实现）。** ZIP v2 已实现项目清单与明确引用资源的打包/还原：包括背景、图片、BGM、GSV 参考音频、生成语音及项目角色立绘，并为 `overlay.gsv_params` 设定字段白名单；导入会校验资源引用、归档路径及体积。编辑器新增“保存到项目文件夹 / 打开项目文件夹”：保存到用户通过浏览器选择的目录，按同一 v2 格式写入 `project.json` 和 `assets/`；打开时只读取清单引用的资源、检查大小，再重建临时 ZIP 并调用既有导入校验。新目录已有 `assets/` 且没有有效 A2D 清单时会拒绝覆盖；已是 A2D 项目的目录可更新。为避免静默删除用户文件，移出清单的旧素材仍留在目录中，但不会被打开或重新导出的 ZIP 纳入。浏览器选择器需要实现 File System Access API；代码和模拟目录契约已测，模拟文件系统已验证从一个目录打开后保存到另一目录会保留导入音频字节；隔离分支临时 `/studio` 页面已确认入口触发系统目录选择器，但自动化未能操作系统窗口，测试取消且目标目录保持为空；实际读写和跨机器迁移验收仍待完成。最终格式继续遵守以下边界：
 
@@ -316,8 +316,9 @@ A2D 剧本项目与素材（单一项目格式）
 - [x] 2026-10-22 DeepSeek/MiMo 可切换入口：若对应三项 `.env` 别名齐全且型号家族匹配，启动时只补建缺失的 `deepseek.toml`/`mimo.toml`；保留现有档、默认档和全局参数，配置文件中的 `api_key` 为空，实际密钥仍由环境别名注入。用 `main.py` 的真实 `load_env()` 顺序读取隔离目录中的虚构 `.env` 后再导入配置单例，验证得到 default/deepseek/mimo 三档且命名档未持久化 key；另用虚构值切换到两个档读取各自环境参数。设置页列表使用档案 ID `deepseek` / `mimo`；现有 TOML 序列化器只把 `config_name` 写为注释，因此 API 显示名回退为小写 ID，当前不影响选择和切换。
 - [x] 2026-10-22 后端安全单测子集：19 个不要求外部服务的 `test_*.py` 模块共 223 项通过、1 项跳过；跳过原因为可选 `jiwer` 未安装。排除了 GSV 在线集成、音频库、音频编排、ASR 质量和 Stage/WS 完整服务测试；使用隔离配置根、禁用 `.env` 装载和独立 `tmp/pytest-safeunit-20261022`，未连接供应商或 GSV。
 - [x] 2026-10-22 Ruff 复核：新增/修改的 `llm_config.py` 与 `web_llm.py` 单文件检查通过。扫描本分支涉及的 Python 文件报告 23 条既有 lint 诊断；逐项与分支 diff 比对后均位于未修改行，未在此顺带清理无关 LingChat 代码。
+- [x] 2026-10-22 trace 隐私边界：测试先复现普通页面 trace 仍持有 `tts_text` 与 `audio_url`；现在默认 ring buffer 只存白名单字段，ASR 评估脚本在导航前显式设置敏感采集标记，HMR 从旧版本恢复普通模式时会原位清洗旧条目。trace 单测 5 项通过；前端全量 19 个测试文件、154 项通过，Vite `build-only` 通过，ASR 脚本 `py_compile` 通过。真实 ASR 流程与真实浏览器下载仍待有服务环境时验收。
 - [ ] 真实 DeepSeek/MiMo 在线流式响应仍待验证；当前未发 API 请求，配置代理 `127.0.0.1:7897` 无监听。隔离启动测试不等同于供应商服务可用或完整应用网络验收。
-- [ ] 远端发布待重试：2026-10-22 再次按原配置执行普通 `git push --porcelain remote-shlin-fork codex/a2d-playback-sync-20261021`，连接 `127.0.0.1:7897` 失败，远端未收到更新；未改代理、未绕过代理、未强推。当前分支本地比跟踪引用 ahead 23；15 个未提交文件仅为既有角色/剧本 YAML，保持未暂存、未改动。
+- [ ] 远端发布待重试：2026-10-22 按原配置执行普通 `git push --porcelain remote-shlin-fork codex/a2d-playback-sync-20261021` 时连接 `127.0.0.1:7897` 失败，远端未收到更新；未改代理、未绕过代理、未强推。本地仍有尚未推送的 A2D 提交；工作树里的 15 个未提交文件仅为既有角色/剧本 YAML，保持未暂存、未改动。
 
 ## 8. 核对来源
 
