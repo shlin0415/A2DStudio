@@ -1,3 +1,4 @@
+import { validateProjectManifest } from '@/composables/a2d-project-format'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { createPinia, setActivePinia } from 'pinia'
 import { strFromU8, unzipSync, zipSync } from 'fflate'
@@ -97,5 +98,56 @@ describe('A2D project archive', () => {
       if (originalRevokeObjectURL) Object.defineProperty(URL, 'revokeObjectURL', originalRevokeObjectURL)
       else Reflect.deleteProperty(URL, 'revokeObjectURL')
     }
+  })
+})
+
+
+function makeValidV2Manifest() {
+  return {
+    format: 'a2d-studio-project',
+    schema_version: 2,
+    title: '便携剧本',
+    exported_at: '2026-10-22T00:00:00.000Z',
+    roles: [{ script_role_key: 'ema', display_name: '艾玛', avatar_assets: {}, reference_audio_path: null }],
+    script: {
+      project_name: '便携剧本',
+      lines: [{
+        id: 'line-1', speaker: 'ema', emotion: '正常', display_text: '你好。',
+        tts_text: '你好。', index: 0, audio_path: 'assets/audio/line-0001.wav', overlay: null, stage_id: '',
+      }],
+      stages: [],
+    },
+    resources: [{
+      path: 'assets/audio/line-0001.wav',
+      kind: 'line_audio',
+      media_type: 'audio/wav',
+      byte_length: 44,
+    }],
+  }
+}
+
+describe('A2D project v2 schema', () => {
+  it('accepts a portable project with role keys and relative resources', () => {
+    expect(validateProjectManifest(makeValidV2Manifest())).toEqual({ ok: true })
+  })
+
+  it('rejects an unsupported schema version with a field-specific error', () => {
+    const manifest = makeValidV2Manifest()
+    manifest.schema_version = 1
+
+    const result = validateProjectManifest(manifest)
+
+    expect(result.ok).toBe(false)
+    expect(result.error).toContain('schema_version')
+  })
+
+  it('rejects a resource path that escapes the archive assets directory', () => {
+    const manifest = makeValidV2Manifest()
+    manifest.resources[0].path = 'assets/audio/../../secret.wav'
+
+    const result = validateProjectManifest(manifest)
+
+    expect(result.ok).toBe(false)
+    expect(result.error).toContain('resources[0].path')
   })
 })
