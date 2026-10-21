@@ -17,6 +17,7 @@ from ling_chat.core.logger import logger
 from ling_chat.utils.runtime_path import package_root
 
 _MODEL_ENV_PROFILES = (("DS", "deepseek"), ("MIMO", "mimo"))
+_MODEL_ENV_PROFILE_NAMES = {"DS": "DeepSeek", "MIMO": "MiMo"}
 
 
 class LLMConfig:
@@ -48,6 +49,7 @@ class LLMConfig:
 
         self._init_config_dir()
         self._load_active()
+        self._seed_env_profiles()
 
     def _init_config_dir(self) -> None:
         """初始化配置文件夹，首次启动时从.env迁移"""
@@ -68,6 +70,40 @@ class LLMConfig:
         default_path = self._config_dir / "default.toml"
         self._write_toml(default_path, llm_config)
         logger.info(f"已创建默认LLM配置: {default_path}")
+
+    def _seed_env_profiles(self) -> None:
+        """Create missing named profiles from complete DeepSeek/MiMo env aliases."""
+        default_main = self._config.get("main", {})
+        for suffix, model_prefix in _MODEL_ENV_PROFILES:
+            api_key = os.environ.get(f"CHAT_API_KEY_{suffix}", "")
+            base_url = os.environ.get(f"CHAT_BASE_URL_{suffix}", "").strip()
+            model = os.environ.get(f"MODEL_TYPE_{suffix}", "").strip()
+            is_matching_model_profile = model.lower().startswith(model_prefix)
+            if not api_key.strip() or not base_url or not is_matching_model_profile:
+                continue
+
+            profile_path = self._config_dir / f"{model_prefix}.toml"
+            if profile_path.exists():
+                continue
+
+            profile_config = {
+                **self._config,
+                "config_name": _MODEL_ENV_PROFILE_NAMES[suffix],
+                "config_description": (
+                    f"Uses the {suffix} environment aliases for the main model."
+                ),
+                "main": {
+                    **default_main,
+                    "provider": "webllm",
+                    "model": model,
+                    "api_key": "",
+                    "base_url": base_url,
+                },
+            }
+            try:
+                self._write_toml(profile_path, profile_config)
+            except OSError as error:
+                logger.warning("Could not seed LLM profile %s: %s", model_prefix, error)
 
     def _extract_env_llm_config(self) -> Dict[str, Any]:
         """从环境变量提取LLM配置（兼容旧provider专用环境变量）"""

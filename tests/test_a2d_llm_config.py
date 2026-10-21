@@ -3,6 +3,11 @@
 import os
 from unittest.mock import Mock
 
+try:
+    import tomllib
+except ImportError:
+    import tomli as tomllib
+
 import pytest
 
 
@@ -144,6 +149,87 @@ def test_active_profile_uses_its_provider_environment(
     assert config["api_key"] == f"{suffix.lower()}-key"
     assert config["base_url"] == f"https://{suffix.lower()}.invalid/v1"
     assert config["model"] == env_model
+
+
+def _prepare_env_profiles(monkeypatch, tmp_path):
+    from ling_chat.configs.llm_config import llm_config
+
+    monkeypatch.setattr(llm_config, "_config_dir", tmp_path)
+    monkeypatch.setattr(
+        llm_config,
+        "_config",
+        {
+            "main": {
+                "provider": "webllm",
+                "model": "default-model",
+                "api_key": "default-secret",
+                "base_url": "https://default.invalid/v1",
+                "temperature": 1.0,
+                "top_p": 0.9,
+                "max_tokens": 1024,
+            },
+            "translator": {
+                "provider": "none",
+                "model": "",
+                "api_key": "",
+                "base_url": "",
+            },
+            "network": {"proxy": ""},
+            "providers": {},
+        },
+    )
+    for suffix, model in (("DS", "deepseek-test-model"), ("MIMO", "mimo-test-model")):
+        monkeypatch.setenv(
+            f"CHAT_API_KEY_{suffix}", f"{suffix.lower()}-test-secret"
+        )
+        monkeypatch.setenv(
+            f"CHAT_BASE_URL_{suffix}", f"https://{suffix.lower()}.invalid/v1"
+        )
+        monkeypatch.setenv(f"MODEL_TYPE_{suffix}", model)
+    return llm_config
+
+
+def test_seeded_env_profiles_do_not_persist_api_keys(monkeypatch, tmp_path):
+    config_manager = _prepare_env_profiles(monkeypatch, tmp_path)
+
+    config_manager._seed_env_profiles()
+
+    for name, suffix, model in (
+        ("deepseek", "DS", "deepseek-test-model"),
+        ("mimo", "MIMO", "mimo-test-model"),
+    ):
+        profile_path = tmp_path / f"{name}.toml"
+        profile = tomllib.loads(profile_path.read_text(encoding="utf-8"))
+        assert profile["main"]["model"] == model
+        assert profile["main"]["base_url"] == (
+            f"https://{suffix.lower()}.invalid/v1"
+        )
+        assert profile["main"]["api_key"] == ""
+        profile_text = profile_path.read_text(encoding="utf-8")
+        assert f"{suffix.lower()}-test-secret" not in profile_text
+        assert "default-secret" not in profile_text
+
+
+def test_seed_env_profiles_preserve_existing_profiles(monkeypatch, tmp_path):
+    config_manager = _prepare_env_profiles(monkeypatch, tmp_path)
+    profile_path = tmp_path / "deepseek.toml"
+    profile_path.write_text("user-owned-profile", encoding="utf-8")
+
+    config_manager._seed_env_profiles()
+
+    assert profile_path.read_text(encoding="utf-8") == "user-owned-profile"
+    assert (tmp_path / "mimo.toml").is_file()
+
+
+def test_seed_env_profiles_requires_all_profile_environment_values(monkeypatch, tmp_path):
+    config_manager = _prepare_env_profiles(monkeypatch, tmp_path)
+    monkeypatch.delenv("CHAT_API_KEY_DS")
+    monkeypatch.setenv("CHAT_API_KEY_MIMO", " ")
+
+    config_manager._seed_env_profiles()
+
+    assert not (tmp_path / "deepseek.toml").exists()
+    assert not (tmp_path / "mimo.toml").exists()
 
 
 def test_switching_llm_profile_reloads_active_ai_service(monkeypatch):
