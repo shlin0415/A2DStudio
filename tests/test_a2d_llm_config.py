@@ -278,3 +278,28 @@ def test_reload_llm_model_updates_service_and_message_generator(monkeypatch):
     assert service.llm_model is replacement_manager
     assert service.message_generator.llm_model is replacement_manager
     assert service.message_generator.agent_runner.llm_model is replacement_manager
+
+
+def test_seeded_profiles_are_listed_by_config_api_without_keys(monkeypatch, tmp_path):
+    import asyncio
+    import json
+
+    from ling_chat.api import llm_config_api
+
+    config_manager = _prepare_env_profiles(monkeypatch, tmp_path)
+    config_manager._seed_env_profiles()
+    monkeypatch.setattr(config_manager, "_active_config_name", "default")
+    monkeypatch.setattr(llm_config_api, "llm_config", config_manager)
+
+    listed = asyncio.run(llm_config_api.list_configs())
+    profiles = {item["name"]: item for item in listed["data"]}
+
+    assert "deepseek" in profiles
+    assert "mimo" in profiles
+
+    for name, suffix in (("deepseek", "ds"), ("mimo", "mimo")):
+        response = asyncio.run(llm_config_api.get_config_by_name(name))
+        serialized_response = json.dumps(response)
+
+        assert response["config"]["main"]["api_key"] == ""
+        assert f"{suffix}-test-secret" not in serialized_response
