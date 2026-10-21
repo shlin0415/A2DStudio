@@ -3,6 +3,7 @@ import { useScriptStore } from '@/stores/modules/script'
 import { useGameStore } from '@/stores/modules/game'
 import { useUIStore } from '@/stores/modules/ui/ui'
 import { emitTrace } from '@/utils/a2d-trace'
+import { waitForStageActions } from '@/composables/a2d-stage-actions'
 import type { ScriptLine, ErrorInfo, Phase } from '@/stores/modules/script'
 import type { GameRole } from '@/stores/modules/game/state'
 
@@ -16,6 +17,7 @@ let bgmNode: OscillatorNode | null = null
 let bgmGain: GainNode | null = null
 let mainAudio: HTMLAudioElement | null = null
 let audioFirstPlay = true
+let audioGeneration = 0
 
 // ── Generate silent WAV (0.5s, 44100Hz mono 16-bit) ────
 function silentWavBlob(): Blob {
@@ -131,7 +133,8 @@ export function setReplayActive(active: boolean) {
 async function playNextInQueue(
   store?: ReturnType<typeof import('@/stores/modules/script')['useScriptStore']>,
   onItemStart?: (line: ScriptLine) => void,
-  onEnded?: () => void,
+  onEnded?: () => boolean | void | Promise<boolean | void>,
+  onAudioFinished?: (lineId: string) => void,
 ) {
   if (audioQueue.value.length === 0) {
     isAudioPlaying.value = false
@@ -143,6 +146,7 @@ async function playNextInQueue(
   }
   isAudioPlaying.value = true
   const item = audioQueue.value.shift()!
+  const itemGeneration = ++audioGeneration
   emitTrace('audio_start', { lineId: item.lineId })
 
   if (store) {
@@ -190,21 +194,24 @@ async function playNextInQueue(
   // onEnded returns true if audio queue should continue recursing. When it returns
   // false (next line is silent, subtitle-timer will drive), do NOT recurse — the
   // timer callback will start playback for the next audio line when it fires.
-  audio.onended = () => {
-    emitTrace('audio_end', { lineId: item.lineId })
-    const continueAudio = onEnded?.() ?? true
-    if (continueAudio) playNextInQueue(store, onItemStart, onEnded)
+  let hasFinishedCurrentItem = false
+  const finishCurrentItem = async (event: 'audio_end' | 'audio_error' | 'audio_play_failed') => {
+    if (hasFinishedCurrentItem || itemGeneration !== audioGeneration) return
+    hasFinishedCurrentItem = true
+    emitTrace(event, { lineId: item.lineId })
+    onAudioFinished?.(item.lineId)
+    await waitForStageActions(item.lineId)
+    if (itemGeneration !== audioGeneration) return
+    const continueAudio = (await onEnded?.()) ?? true
+    if (continueAudio) playNextInQueue(store, onItemStart, onEnded, onAudioFinished)
+    else {
+      isAudioPlaying.value = false
+      if (store) store.isAudioPlaying = false
+    }
   }
-  audio.onerror = () => {
-    emitTrace('audio_error', { lineId: item.lineId })
-    const continueAudio = onEnded?.() ?? true
-    if (continueAudio) playNextInQueue(store, onItemStart, onEnded)
-  }
-  audio.play().catch(() => {
-    emitTrace('audio_play_failed', { lineId: item.lineId })
-    const continueAudio = onEnded?.() ?? true
-    if (continueAudio) playNextInQueue(store, onItemStart, onEnded)
-  })
+  audio.onended = () => { void finishCurrentItem('audio_end') }
+  audio.onerror = () => { void finishCurrentItem('audio_error') }
+  audio.play().catch(() => { void finishCurrentItem('audio_play_failed') })
 }
 
 // ── Audio element control (for replay transport) ────
@@ -215,6 +222,7 @@ export function pauseCurrentAudio(): void {
 
 /** Stop + reset the currently playing audio element. */
 export function stopCurrentAudio(): void {
+  audioGeneration++
   if (mainAudio) {
     mainAudio.pause()
     mainAudio.currentTime = 0

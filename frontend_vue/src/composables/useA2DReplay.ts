@@ -4,6 +4,7 @@ import { useGameStore } from '@/stores/modules/game'
 import { audioQueue, isAudioPlaying } from '@/composables/audio-queue'
 import { playNextInQueue, setReplayActive, pauseCurrentAudio, stopCurrentAudio, mainAudioPlay } from '@/composables/useA2DWebSocket'
 import { playBGM, stopBGM } from '@/composables/useA2DBGM'
+import { waitForStageActions } from '@/composables/a2d-stage-actions'
 import type { ReplayState } from '@/composables/types'
 import type { ScriptLine } from '@/stores/modules/script'
 
@@ -24,6 +25,8 @@ let _initialized = false
 // (_timerActive) ensures mutual exclusion; pause clears, resume rebuilds.
 let _subtitleTimer: ReturnType<typeof setTimeout> | null = null
 let _timerActive = false
+let _pendingAudioEndLineId: string | null = null
+let _audioEndAwaitingActionsLineId: string | null = null
 
 /** Compute subtitle display duration for a silent line (ms). */
 function subtitleDurationMs(text: string): number {
@@ -112,6 +115,8 @@ export function useA2DReplay() {
     _skippedLines!.value = []
     _missingAudioLines!.value = []
     _silentLines!.value = []
+    _pendingAudioEndLineId = null
+    _audioEndAwaitingActionsLineId = null
 
     state.value = 'loading'
     error.value = null
@@ -139,21 +144,27 @@ export function useA2DReplay() {
     _timerActive = true
     _subtitleTimer = setTimeout(() => {
       _timerActive = false
-      advance()
-      // After advancing, determine what to do with the new current line.
-      const newId = scriptStore.playingLineId
-      const newLine = replayLines.value.find(l => l.id === newId)
-      if (!newLine) return
-      if (newLine.audio_path) {
-        // Audio line: start playback if queue has items and nothing playing.
-        if (!isAudioPlaying.value && audioQueue.value.length > 0) {
-          playNextInQueue(scriptStore, onItemStart, onEnded)
-        }
-      } else {
-        // Consecutive silent line: re-arm the timer to keep progression going.
-        advanceOnTimer(newLine)
-      }
+      void continueAfterSilentLine(line)
     }, subtitleDurationMs(line.display_text))
+  }
+
+  async function continueAfterSilentLine(line: ScriptLine): Promise<void> {
+    await waitForStageActions(line.id)
+    if (_state!.value !== 'playing' || scriptStore.playingLineId !== line.id) return
+    advance()
+    // After advancing, determine what to do with the new current line.
+    const newId = scriptStore.playingLineId
+    const newLine = replayLines.value.find(l => l.id === newId)
+    if (!newLine) return
+    if (newLine.audio_path) {
+      // Audio line: start playback if queue has items and nothing playing.
+      if (!isAudioPlaying.value && audioQueue.value.length > 0) {
+        playNextInQueue(scriptStore, onItemStart, onEnded, onAudioFinished)
+      }
+    } else {
+      // Consecutive silent line: re-arm the timer to keep progression going.
+      advanceOnTimer(newLine)
+    }
   }
 
   /** Enqueue audio items from startIndex onward. */
@@ -185,7 +196,7 @@ export function useA2DReplay() {
     // advances to an audio line, that line's onEnded-free path will trigger playback.
     const firstLine = lines[0]
     if (firstLine && firstLine.audio_path && !isAudioPlaying.value) {
-      playNextInQueue(scriptStore, onItemStart, onEnded)
+      playNextInQueue(scriptStore, onItemStart, onEnded, onAudioFinished)
     }
   }
 
@@ -208,6 +219,13 @@ export function useA2DReplay() {
    * false if the next line is silent and the subtitle-timer will drive progression.
    */
   function onEnded(): boolean {
+    _audioEndAwaitingActionsLineId = null
+    if (_state!.value === 'paused') {
+      _pendingAudioEndLineId = scriptStore.playingLineId
+      return false
+    }
+    if (_state!.value !== 'playing') return false
+
     const nextIdx = currentIndex.value + 1
     const nextLine = replayLines.value[nextIdx]
     if (nextLine && !nextLine.audio_path) {
@@ -217,6 +235,12 @@ export function useA2DReplay() {
     }
     advance()
     return true
+  }
+
+  function onAudioFinished(lineId: string): void {
+    if (scriptStore.playingLineId === lineId) {
+      _audioEndAwaitingActionsLineId = lineId
+    }
   }
 
   // Defense-in-depth: re-sync on playingLineId change (guards against B1 callback-thread regression).
@@ -236,13 +260,19 @@ export function useA2DReplay() {
   function resume() {
     if (state.value !== 'paused') return
     state.value = 'playing'
+    if (_audioEndAwaitingActionsLineId === scriptStore.playingLineId) return
+    if (_pendingAudioEndLineId === scriptStore.playingLineId) {
+      _pendingAudioEndLineId = null
+      if (onEnded()) playNextInQueue(scriptStore, onItemStart, onEnded, onAudioFinished)
+      return
+    }
     if (!isAudioPlaying.value) {
       // If current line is silent, rebuild subtitle-timer.
       const curLine = replayLines.value.find(l => l.id === scriptStore.playingLineId)
       if (curLine && !curLine.audio_path) {
         advanceOnTimer(curLine)
       } else {
-        playNextInQueue(scriptStore, onItemStart, onEnded)
+        playNextInQueue(scriptStore, onItemStart, onEnded, onAudioFinished)
       }
     } else {
       mainAudioPlay() // B3: resume the paused audio element
@@ -252,6 +282,8 @@ export function useA2DReplay() {
   function seek(index: number) {
     if (index < 0 || index >= replayLines.value.length) return
     const prevState = state.value
+    _pendingAudioEndLineId = null
+    _audioEndAwaitingActionsLineId = null
     state.value = 'seeking'
     stopCurrentAudio() // B4: pause active audio before switching (prevents overlap)
     isAudioPlaying.value = false // MG5: reset so enqueueFromIndex starts playback
@@ -266,6 +298,8 @@ export function useA2DReplay() {
 
   function stop() {
     state.value = 'idle'
+    _pendingAudioEndLineId = null
+    _audioEndAwaitingActionsLineId = null
     stopCurrentAudio() // B4: pause active audio
     isAudioPlaying.value = false // MG4: reset so a subsequent start() can play
     clearSubtitleTimer() // Clear any active subtitle-timer
@@ -357,5 +391,7 @@ export function _resetReplaySingleton() {
   if (_missingAudioLines) _missingAudioLines.value = []
   if (_silentLines) _silentLines.value = []
   clearSubtitleTimer()
+  _pendingAudioEndLineId = null
+  _audioEndAwaitingActionsLineId = null
   stopBGM()
 }

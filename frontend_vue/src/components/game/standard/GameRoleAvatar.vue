@@ -7,6 +7,7 @@
       class="absolute w-full h-full pointer-events-none origin-[center_0%] role-container-transition"
       :style="containerStyle"
       @animationend="handleAnimationEnd"
+      @animationcancel="handleAnimationCancel"
     >
       <!-- 使用单独提取出来的图片淡入淡出组件 -->
       <ImageAcrossFade
@@ -20,7 +21,12 @@
       />
 
       <!-- 气泡 -->
-      <div :class="bubbleClasses" :style="bubbleStyles" class="bubble"></div>
+      <div
+        :class="bubbleClasses"
+        :style="bubbleStyles"
+        class="bubble"
+        @transitionend="handleBubbleTransitionEnd"
+      ></div>
 
       <!-- 情绪音效 -->
       <audio ref="bubbleAudio"></audio>
@@ -29,9 +35,11 @@
 </template>
 
 <script setup lang="ts">
-import { ref, computed, watch, nextTick, toRefs } from 'vue'
+import { ref, computed, watch, nextTick, toRefs, onUnmounted } from 'vue'
 import { useGameStore } from '@/stores/modules/game'
+import { useScriptStore } from '@/stores/modules/script'
 import { EMOTION_CONFIG, EMOTION_CONFIG_EMO } from '@/controllers/emotion/config'
+import { beginStageAction, endStageAction, type StageAction } from '@/composables/a2d-stage-actions'
 import type { GameRole } from '@/stores/modules/game/state'
 import TouchAreas from './TouchAreas.vue'
 import ImageAcrossFade from '@/components/ui/ImageAcrossFade.vue'
@@ -42,6 +50,7 @@ const props = defineProps<{
 }>()
 
 const gameStore = useGameStore()
+const scriptStore = useScriptStore()
 const { role } = toRefs(props)
 
 const bubbleAudio = ref<HTMLAudioElement | null>(null)
@@ -54,6 +63,13 @@ const currentBubbleClass = ref('')
 
 let bubbleTimeoutId: number | null = null
 let latestEmotionId = 0
+let activeAnimationName = ''
+let activeAnimationAction: StageAction | null = null
+let activeBubbleAction: StageAction | null = null
+
+function animationNameFromClass(animationClass: string): string {
+  return animationClass.replace(/-([a-z])/g, (_, letter: string) => letter.toUpperCase())
+}
 
 // --- 样式计算 ---
 const layoutPosition = computed(() => {
@@ -108,6 +124,24 @@ watch(
   () => role.value.emotion,
   async (newEmotion) => {
     const currentId = ++latestEmotionId
+    const actionLineId = scriptStore.playingLineId
+    const config = EMOTION_CONFIG[newEmotion]
+    if (activeAnimationAction) endStageAction(activeAnimationAction, 'cancelled')
+    if (activeBubbleAction) endStageAction(activeBubbleAction, 'cancelled')
+    activeAnimationAction = null
+    activeBubbleAction = null
+    activeAnimationName = ''
+    if (bubbleTimeoutId !== null) {
+      window.clearTimeout(bubbleTimeoutId)
+      bubbleTimeoutId = null
+    }
+
+    if (config?.animation && config.animation !== 'none') {
+      activeAnimationAction = beginStageAction('animation', actionLineId, role.value.roleId)
+    }
+    if (config?.bubbleImage && config.bubbleImage !== 'none') {
+      activeBubbleAction = beginStageAction('bubble', actionLineId, role.value.roleId)
+    }
 
     // 1. 等待 Vue computed(targetAvatarUrl) 更新并传递给子组件
     await nextTick()
@@ -120,11 +154,13 @@ watch(
     // 检查是否仍然是最新的表情更新
     if (currentId !== latestEmotionId) return
 
-    const config = EMOTION_CONFIG[newEmotion]
     if (!config) return
 
     if (config.animation && config.animation !== 'none') {
+      activeAnimationName = animationNameFromClass(config.animation)
       activeAnimationClass.value = config.animation
+    } else {
+      activeAnimationClass.value = 'normal'
     }
 
     if (config.bubbleImage && config.bubbleImage !== 'none') {
@@ -133,11 +169,8 @@ watch(
       currentBubbleClass.value = config.bubbleClass
       isBubbleVisible.value = false
       nextTick(() => {
+        if (currentId !== latestEmotionId) return
         isBubbleVisible.value = true
-
-        if (bubbleTimeoutId !== null) {
-          window.clearTimeout(bubbleTimeoutId)
-        }
         bubbleTimeoutId = window.setTimeout(() => {
           isBubbleVisible.value = false
           bubbleTimeoutId = null
@@ -154,11 +187,36 @@ watch(
   { immediate: true },
 )
 
-const handleAnimationEnd = () => {
+const handleAnimationEnd = (event: AnimationEvent) => {
+  if (!activeAnimationAction || event.animationName !== activeAnimationName) return
+  if (activeAnimationAction) endStageAction(activeAnimationAction, 'completed')
+  activeAnimationAction = null
+  activeAnimationName = ''
   if (activeAnimationClass.value !== 'normal') {
     activeAnimationClass.value = 'normal'
   }
 }
+
+const handleAnimationCancel = (event: AnimationEvent) => {
+  if (!activeAnimationAction || event.animationName !== activeAnimationName) return
+  if (activeAnimationAction) endStageAction(activeAnimationAction, 'cancelled')
+  activeAnimationAction = null
+  activeAnimationName = ''
+}
+
+const handleBubbleTransitionEnd = (event: TransitionEvent) => {
+  if (event.propertyName !== 'opacity' || isBubbleVisible.value || !activeBubbleAction) return
+  if (activeBubbleAction) endStageAction(activeBubbleAction, 'completed')
+  activeBubbleAction = null
+}
+
+onUnmounted(() => {
+  if (bubbleTimeoutId !== null) window.clearTimeout(bubbleTimeoutId)
+  if (activeAnimationAction) endStageAction(activeAnimationAction, 'cancelled')
+  if (activeBubbleAction) endStageAction(activeBubbleAction, 'cancelled')
+  activeAnimationAction = null
+  activeBubbleAction = null
+})
 </script>
 
 <style scoped>

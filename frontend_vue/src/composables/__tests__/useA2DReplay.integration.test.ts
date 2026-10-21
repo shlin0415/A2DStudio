@@ -7,12 +7,14 @@ import { useScriptStore, type ScriptLine } from '@/stores/modules/script'
 import { useGameStore } from '@/stores/modules/game'
 import { audioQueue, isAudioPlaying } from '@/composables/audio-queue'
 import { useA2DReplay, _resetReplaySingleton } from '@/composables/useA2DReplay'
+import { _resetStageActions, beginStageAction, endStageAction } from '@/composables/a2d-stage-actions'
 import { getCurrentBGM, playBGM, stopBGM } from '@/composables/useA2DBGM'
 
 describe('playNextInQueue callback threading (B1/B2 fix)', () => {
   beforeEach(() => {
     setActivePinia(createPinia())
     audioQueue.value = []
+    _resetStageActions()
   })
 
   afterEach(() => {
@@ -79,6 +81,245 @@ describe('playNextInQueue callback threading (B1/B2 fix)', () => {
       expect(endedCount.n).toBe(3)
       // Queue drained.
       expect(audioQueue.value.length).toBe(0)
+    } finally {
+      vi.restoreAllMocks()
+    }
+  })
+
+  it('keeps the current line until its stage action finishes after audio end', async () => {
+    const onendedHandlers: Array<() => void> = []
+    class FakeAudio {
+      src = ''; muted = false; currentTime = 0
+      onerror: (() => void) | null = null
+      load() {}
+      play() { return Promise.resolve() }
+      pause() {}
+      set onended(fn: () => void) { onendedHandlers.push(fn) }
+      get onended() { return null }
+    }
+    // @ts-expect-error override Audio constructor
+    globalThis.Audio = FakeAudio
+    const originalSetTimeout = global.setTimeout
+    vi.spyOn(global, 'setTimeout').mockImplementation((fn: () => void) => {
+      if (typeof fn === 'function') fn()
+      return 0 as unknown as ReturnType<typeof setTimeout>
+    })
+
+    try {
+      const { playNextInQueue } = await import('@/composables/useA2DWebSocket')
+      const store = useScriptStore()
+      store.addLine(makeLine('action-line', 0))
+      store.addLine(makeLine('next-line', 1))
+      audioQueue.value.push(
+        { url: '/action.wav', lineId: 'action-line' },
+        { url: '/next.wav', lineId: 'next-line' },
+      )
+      const action = beginStageAction('bubble', 'action-line', 1)
+      const onEnded = vi.fn(() => true)
+
+      await playNextInQueue(store, undefined, onEnded)
+      await new Promise(resolve => originalSetTimeout(resolve, 5))
+      onendedHandlers[0]?.()
+      await new Promise(resolve => originalSetTimeout(resolve, 5))
+
+      expect(onEnded).not.toHaveBeenCalled()
+      expect(store.playingLineId).toBe('action-line')
+      expect(audioQueue.value).toHaveLength(1)
+
+      endStageAction(action, 'completed')
+      await new Promise(resolve => originalSetTimeout(resolve, 5))
+
+      expect(onEnded).toHaveBeenCalledOnce()
+      expect(store.playingLineId).toBe('next-line')
+    } finally {
+      vi.restoreAllMocks()
+    }
+  })
+
+  it('replay holds the subtitle and next audio until the active stage action finishes', async () => {
+    const onendedHandlers: Array<() => void> = []
+    class FakeAudio {
+      src = ''; muted = false; currentTime = 0
+      onerror: (() => void) | null = null
+      load() {}
+      play() { return Promise.resolve() }
+      pause() {}
+      set onended(fn: () => void) { onendedHandlers.push(fn) }
+      get onended() { return null }
+    }
+    // @ts-expect-error override Audio constructor
+    globalThis.Audio = FakeAudio
+    const originalSetTimeout = global.setTimeout
+    vi.spyOn(global, 'setTimeout').mockImplementation((fn: () => void) => {
+      if (typeof fn === 'function') fn()
+      return 0 as unknown as ReturnType<typeof setTimeout>
+    })
+
+    try {
+      const store = useScriptStore()
+      store.addLine(makeLine('replay-action', 0, { display_text: '动作期间保持这一句' }))
+      store.addLine(makeLine('replay-next', 1, { display_text: '动作结束后再显示' }))
+      _resetReplaySingleton()
+      const replay = useA2DReplay()
+      replay.start(0)
+      const action = beginStageAction('bubble', 'replay-action', 1)
+      await new Promise(resolve => originalSetTimeout(resolve, 5))
+
+      onendedHandlers[0]?.()
+      await new Promise(resolve => originalSetTimeout(resolve, 5))
+
+      expect(store.playingLineId).toBe('replay-action')
+      expect(replay.currentSubtitle.value).toBe('动作期间保持这一句')
+      expect(onendedHandlers).toHaveLength(1)
+
+      endStageAction(action, 'completed')
+      await new Promise(resolve => originalSetTimeout(resolve, 5))
+
+      expect(store.playingLineId).toBe('replay-next')
+      expect(replay.currentSubtitle.value).toBe('动作结束后再显示')
+      expect(onendedHandlers).toHaveLength(2)
+    } finally {
+      vi.restoreAllMocks()
+    }
+  })
+
+  it('replay resumes the pending line transition after pausing during an action wait', async () => {
+    const onendedHandlers: Array<() => void> = []
+    class FakeAudio {
+      src = ''; muted = false; currentTime = 0
+      onerror: (() => void) | null = null
+      load() {}
+      play() { return Promise.resolve() }
+      pause() {}
+      set onended(fn: () => void) { onendedHandlers.push(fn) }
+      get onended() { return null }
+    }
+    // @ts-expect-error override Audio constructor
+    globalThis.Audio = FakeAudio
+    const originalSetTimeout = global.setTimeout
+    vi.spyOn(global, 'setTimeout').mockImplementation((fn: () => void) => {
+      if (typeof fn === 'function') fn()
+      return 0 as unknown as ReturnType<typeof setTimeout>
+    })
+
+    try {
+      const store = useScriptStore()
+      store.addLine(makeLine('pause-action', 0))
+      store.addLine(makeLine('pause-next', 1))
+      _resetReplaySingleton()
+      const replay = useA2DReplay()
+      replay.start(0)
+      const action = beginStageAction('bubble', 'pause-action', 1)
+      await new Promise(resolve => originalSetTimeout(resolve, 5))
+      onendedHandlers[0]?.()
+      replay.pause()
+      endStageAction(action, 'completed')
+      await new Promise(resolve => originalSetTimeout(resolve, 5))
+
+      expect(replay.isPaused.value).toBe(true)
+      expect(store.playingLineId).toBe('pause-action')
+      expect(onendedHandlers).toHaveLength(1)
+
+      replay.resume()
+      await new Promise(resolve => originalSetTimeout(resolve, 5))
+
+      expect(store.playingLineId).toBe('pause-next')
+      expect(onendedHandlers).toHaveLength(2)
+    } finally {
+      vi.restoreAllMocks()
+    }
+  })
+
+  it('does not replay ended audio when resuming before its stage action finishes', async () => {
+    const onendedHandlers: Array<() => void> = []
+    const play = vi.fn(() => Promise.resolve())
+    class FakeAudio {
+      src = ''; muted = false; currentTime = 0
+      onerror: (() => void) | null = null
+      load() {}
+      play = play
+      pause() {}
+      set onended(fn: () => void) { onendedHandlers.push(fn) }
+      get onended() { return null }
+    }
+    // @ts-expect-error override Audio constructor
+    globalThis.Audio = FakeAudio
+    const originalSetTimeout = global.setTimeout
+    vi.spyOn(global, 'setTimeout').mockImplementation((fn: () => void) => {
+      if (typeof fn === 'function') fn()
+      return 0 as unknown as ReturnType<typeof setTimeout>
+    })
+
+    try {
+      const websocketModule = await import('@/composables/useA2DWebSocket')
+      const resumeAudioSpy = vi.spyOn(websocketModule, 'mainAudioPlay')
+      const store = useScriptStore()
+      store.addLine(makeLine('resume-action', 0))
+      store.addLine(makeLine('resume-next', 1))
+      _resetReplaySingleton()
+      const replay = useA2DReplay()
+      replay.start(0)
+      const action = beginStageAction('bubble', 'resume-action', 1)
+      await new Promise(resolve => originalSetTimeout(resolve, 5))
+
+      onendedHandlers[0]?.()
+      replay.pause()
+      replay.resume()
+
+      expect(play).toHaveBeenCalledTimes(2)
+      expect(resumeAudioSpy).not.toHaveBeenCalled()
+      expect(store.playingLineId).toBe('resume-action')
+
+      endStageAction(action, 'completed')
+      await new Promise(resolve => originalSetTimeout(resolve, 5))
+
+      expect(store.playingLineId).toBe('resume-next')
+      expect(onendedHandlers).toHaveLength(2)
+    } finally {
+      vi.restoreAllMocks()
+    }
+  })
+
+  it('ignores a stale audio completion after seeking during an action wait', async () => {
+    const onendedHandlers: Array<() => void> = []
+    class FakeAudio {
+      src = ''; muted = false; currentTime = 0
+      onerror: (() => void) | null = null
+      load() {}
+      play() { return Promise.resolve() }
+      pause() {}
+      set onended(fn: () => void) { onendedHandlers.push(fn) }
+      get onended() { return null }
+    }
+    // @ts-expect-error override Audio constructor
+    globalThis.Audio = FakeAudio
+    const originalSetTimeout = global.setTimeout
+    vi.spyOn(global, 'setTimeout').mockImplementation((fn: () => void) => {
+      if (typeof fn === 'function') fn()
+      return 0 as unknown as ReturnType<typeof setTimeout>
+    })
+
+    try {
+      const store = useScriptStore()
+      store.addLine(makeLine('seek-action', 0))
+      store.addLine(makeLine('seek-target', 1))
+      store.addLine(makeLine('seek-next', 2))
+      _resetReplaySingleton()
+      const replay = useA2DReplay()
+      replay.start(0)
+      const action = beginStageAction('bubble', 'seek-action', 1)
+      await new Promise(resolve => originalSetTimeout(resolve, 5))
+      onendedHandlers[0]?.()
+      await new Promise(resolve => originalSetTimeout(resolve, 5))
+
+      replay.seek(1)
+      await new Promise(resolve => originalSetTimeout(resolve, 5))
+      endStageAction(action, 'cancelled')
+      await new Promise(resolve => originalSetTimeout(resolve, 5))
+
+      expect(store.playingLineId).toBe('seek-target')
+      expect(replay.currentSubtitle.value).toBe('文本seek-target')
+      expect(onendedHandlers).toHaveLength(2)
     } finally {
       vi.restoreAllMocks()
     }
@@ -434,9 +675,40 @@ describe('playNextInQueue callback threading (B1/B2 fix)', () => {
 
       // Manually fire the timer → advance() → moves to a1 (audio) AND starts audio queue.
       timerFn!()
+      await Promise.resolve()
       expect(store.playingLineId).toBe('a1')
       // After advancing to audio line, audioQueue should start draining (isAudioPlaying).
       expect(isAudioPlaying.value).toBe(true)
+    } finally {
+      vi.restoreAllMocks()
+    }
+  })
+
+  it('engine: silent line subtitle stays until its stage action finishes', async () => {
+    let timerFn: (() => void) | null = null
+    vi.spyOn(global, 'setTimeout').mockImplementation((fn: () => void) => {
+      timerFn = fn
+      return 0 as unknown as ReturnType<typeof setTimeout>
+    })
+
+    try {
+      const store = useScriptStore()
+      store.addLine(makeLine('silent-action', 0, { speaker: 'narrator', audio_path: null }))
+      store.addLine(makeLine('after-action', 1))
+      _resetReplaySingleton()
+      const replay = useA2DReplay()
+      replay.start(0)
+      const action = beginStageAction('bubble', 'silent-action', 1)
+
+      timerFn!()
+      await Promise.resolve()
+      expect(store.playingLineId).toBe('silent-action')
+      expect(replay.currentSubtitle.value).toBe('文本silent-action')
+
+      endStageAction(action, 'completed')
+      await Promise.resolve()
+
+      expect(store.playingLineId).toBe('after-action')
     } finally {
       vi.restoreAllMocks()
     }
@@ -468,16 +740,19 @@ describe('playNextInQueue callback threading (B1/B2 fix)', () => {
 
       // Fire timer 1 → advances to s2, re-arms timer.
       timerCallbacks[0]()
+      await Promise.resolve()
       expect(store.playingLineId).toBe('s2')
       expect(timerCallbacks.length).toBe(2)  // re-armed
 
       // Fire timer 2 → advances to s3, re-arms timer.
       timerCallbacks[1]()
+      await Promise.resolve()
       expect(store.playingLineId).toBe('s3')
       expect(timerCallbacks.length).toBe(3)  // re-armed
 
       // Fire timer 3 → advances to a1 (audio), starts audio playback.
       timerCallbacks[2]()
+      await Promise.resolve()
       expect(store.playingLineId).toBe('a1')
       expect(isAudioPlaying.value).toBe(true)
     } finally {

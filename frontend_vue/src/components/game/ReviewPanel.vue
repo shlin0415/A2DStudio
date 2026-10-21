@@ -1,8 +1,19 @@
 <template>
   <div class="review-panel">
+    <div class="diagnostics-row">
+      <button
+        class="diagnostics-button"
+        type="button"
+        title="只导出时序与行元数据，不含台词正文或本机文件路径"
+        @click="downloadSafeTrace"
+      >
+        导出时序诊断
+      </button>
+    </div>
+
     <!-- Thinking / Synthesizing — show generated text as read-only preview -->
-    <div v-if="(store.isThinking || store.isSynthesizing) && store.currentLine" class="preview-area">
-      <div class="preview-text">{{ store.currentLine.display_text }}</div>
+    <div v-if="(store.isThinking || store.isSynthesizing) && previewLine" class="preview-area">
+      <div class="preview-text">{{ previewLine.display_text }}</div>
       <div class="preview-status">
         <template v-if="store.isThinking">思考中...</template>
         <template v-else>&#x1F50A; 语音合成中...</template>
@@ -122,6 +133,7 @@ import { useScriptStore } from '@/stores/modules/script'
 import { useA2DWebSocket } from '@/composables/useA2DWebSocket'
 import { useA2DReplay } from '@/composables/useA2DReplay'
 import { exportSession, importSession, commitImport } from '@/composables/useA2DSaveLoad'
+import { downloadSafeTrace, emitTrace } from '@/utils/a2d-trace'
 
 const store = useScriptStore()
 const { sendStart, sendContinue, sendRetry, sendRegenerateTTS, logUserAction } = useA2DWebSocket()
@@ -135,6 +147,22 @@ const importError = ref(false)
 // Import is gated to idle/paused phases (matches useA2DSaveLoad internal guard,
 // but we also disable the button so the user never triggers a rejected import).
 const canImport = computed(() => store.isIdle || store.isPaused)
+const previewLine = computed(() => store.playingLine ?? store.currentLine)
+const visiblePreviewLine = computed(() =>
+  (store.isThinking || store.isSynthesizing) ? previewLine.value : null,
+)
+
+watch(visiblePreviewLine, (line, previousLine) => {
+  if (previousLine) {
+    emitTrace('review_preview_hide', { lineId: previousLine.id, index: previousLine.index })
+  }
+  if (!line) return
+  emitTrace('review_preview', {
+    lineId: line.id,
+    index: line.index,
+    source: store.playingLine?.id === line.id ? 'playing' : 'generated',
+  })
+}, { immediate: true })
 
 const editingText = ref('')
 let lastLineId = ''
@@ -295,6 +323,24 @@ async function handleImportChange(event: Event) {
   align-items: center;
   gap: 8px;
   margin-top: 8px;
+}
+.diagnostics-row {
+  display: flex;
+  justify-content: flex-end;
+  margin-bottom: 6px;
+}
+.diagnostics-button {
+  padding: 3px 8px;
+  border: 1px solid rgba(255, 255, 255, 0.16);
+  border-radius: 5px;
+  background: transparent;
+  color: rgba(255, 255, 255, 0.55);
+  font-size: 11px;
+  cursor: pointer;
+}
+.diagnostics-button:hover {
+  color: #fff;
+  background: rgba(255, 255, 255, 0.08);
 }
 .import-message {
   font-size: 12px;

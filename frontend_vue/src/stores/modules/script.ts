@@ -214,12 +214,16 @@ export const useScriptStore = defineStore('script', () => {
     const oldPhase = phase.value
     phase.value = newPhase
     emitTrace('phase_change', { from: oldPhase, to: newPhase })
-    // Clear batch progress and audio state at start of each batch
-    if (newPhase === 'thinking') {
+    // Reset only when a new generation starts. The backend also emits thinking
+    // between generated lines while earlier TTS is still playing, so resetting
+    // on every thinking event loses the active presentation line mid-sentence.
+    if (
+      newPhase === 'thinking'
+      && (oldPhase === 'idle' || oldPhase === 'paused' || oldPhase === 'error')
+    ) {
       batchIndex.value = 0
       batchTotal.value = 0
-      playingLineId.value = null
-      isAudioPlaying.value = false
+      if (!isAudioPlaying.value) playingLineId.value = null
     }
   }
 

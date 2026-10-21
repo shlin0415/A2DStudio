@@ -251,7 +251,8 @@ function Start-A2DStudio {
             $viteArguments = '"{0}" --host 127.0.0.1 --port 5173 --strictPort' -f $viteCli
             $frontend = Start-LoggedProcess -Name 'frontend' -Executable $nodeExecutable -Arguments $viteArguments `
                 -WorkingDirectory $frontendRoot -ExpectedArgument 'vite.js'
-            Wait-ForHttp -Process $frontend -Name 'Frontend' -Url 'http://127.0.0.1:5173/'
+            $studioUrl = 'http://127.0.0.1:5173/studio'
+            Wait-ForHttp -Process $frontend -Name 'Frontend' -Url $studioUrl
             $script:Manifest.services[-1].status = 'ready'
         }
         finally {
@@ -262,7 +263,13 @@ function Start-A2DStudio {
         $script:Manifest.status = 'running'
         Save-Manifest
         Write-LauncherLog 'All four services are ready.'
-        Write-LauncherLog 'Open A2D Studio: http://127.0.0.1:5173'
+        Write-LauncherLog "Opening A2D Studio: $studioUrl"
+        try {
+            Start-Process -FilePath $studioUrl -ErrorAction Stop | Out-Null
+        }
+        catch {
+            Write-LauncherLog "Could not open the default browser: $($_.Exception.Message)"
+        }
         Write-LauncherLog 'Stop them with stop-a2d-studio.bat.'
         return 0
     }

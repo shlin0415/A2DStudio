@@ -15,10 +15,36 @@
 </template>
 
 <script setup lang="ts">
-defineProps<{
+import { watch } from 'vue'
+import { emitTrace } from '@/utils/a2d-trace'
+
+const props = withDefaults(defineProps<{
   text: string
   isNarrator?: boolean
-}>()
+  lineId?: string | null
+  lineIndex?: number | null
+}>(), {
+  lineId: null,
+  lineIndex: null,
+})
+
+watch(
+  () => [props.lineId, props.text] as const,
+  ([lineId, text], previousValue) => {
+    const [previousLineId, previousText] = previousValue ?? [null, '']
+    if (previousLineId && previousText) {
+      emitTrace('subtitle_hide', { lineId: previousLineId })
+    }
+    if (!lineId || !text) return
+
+    emitTrace('subtitle_show', {
+      lineId,
+      ...(props.lineIndex === null ? {} : { lineIndex: props.lineIndex }),
+      characterCount: text.length,
+    })
+  },
+  { immediate: true },
+)
 </script>
 
 <style scoped>

@@ -6,7 +6,12 @@
 
     <!-- A2D project visuals and subtitles remain visible in both modes. -->
     <StageOverlay :visual="currentVisual" />
-    <SubtitleOverlay :text="replaySubtitle" :is-narrator="isNarrator" />
+    <SubtitleOverlay
+      :text="replaySubtitle"
+      :is-narrator="isNarrator"
+      :line-id="playingLine?.id ?? null"
+      :line-index="playingLine?.index ?? null"
+    />
 
     <div class="stage-toolbar">
       <button

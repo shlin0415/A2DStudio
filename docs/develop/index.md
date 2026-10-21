@@ -15,3 +15,7 @@ description: 介绍LingChat开发的相关事宜，包括流程，项目结构�
 - [剧本编写指南（测试版）](./story_guide.md)
 - [人物卡制作指南](./character_guide.md)
 - [Style-Bert-VITS2模型训练教程](./Style-Bert-VITS2模型训练教程.md)
+
+## A2D Studio
+
+- [A2D Studio 后续开发计划](./a2d-studio-development-plan.md)

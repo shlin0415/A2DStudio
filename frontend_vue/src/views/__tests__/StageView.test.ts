@@ -4,8 +4,9 @@ import StageView from '../StageView.vue'
 
 const mocks = vi.hoisted(() => ({
   scriptStore: {
-    lines: [] as Array<{ id: string }>,
+    lines: [] as Array<{ id: string; index?: number }>,
     selectedLineId: '',
+    selectedLine: null as { id: string; index?: number } | null,
     playingLineId: null as string | null,
     stageMap: {} as Record<string, string>,
   },
@@ -60,7 +61,8 @@ function mountStageView() {
         },
         StageOverlay: true,
         SubtitleOverlay: {
-          template: '<div />',
+          props: ['text', 'lineId', 'lineIndex', 'isNarrator'],
+          template: '<div data-testid="subtitle" :data-line-id="lineId" :data-line-index="lineIndex">{{ text }}</div>',
         },
         ScriptPanel: {
           template: '<div data-testid="script-panel" />',
@@ -74,6 +76,7 @@ describe('StageView', () => {
   beforeEach(() => {
     mocks.scriptStore.lines = []
     mocks.scriptStore.selectedLineId = ''
+    mocks.scriptStore.selectedLine = null
     mocks.scriptStore.playingLineId = null
     mocks.replay.isPlaying.value = false
     mocks.replay.isPaused.value = false
@@ -109,6 +112,15 @@ describe('StageView', () => {
     await wrapper.get('[data-testid="focus-play"]').trigger('click')
 
     expect(mocks.replay.start).toHaveBeenCalledWith(1)
+  })
+
+  it('passes the active line identity to the subtitle layer for timing traces', () => {
+    mocks.scriptStore.lines = [{ id: 'line-1', index: 3 }]
+    mocks.scriptStore.playingLineId = 'line-1'
+    const wrapper = mountStageView()
+
+    expect(wrapper.get('[data-testid="subtitle"]').attributes('data-line-id')).toBe('line-1')
+    expect(wrapper.get('[data-testid="subtitle"]').attributes('data-line-index')).toBe('3')
   })
 
   it('stops playback and returns to editing when focused playback is exited', async () => {

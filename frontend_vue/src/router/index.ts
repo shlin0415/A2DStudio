@@ -21,8 +21,8 @@ const routes = [
     component: ComapionMode,
   },
   {
-    path: '/stage',
-    name: 'A2DStage',
+    path: '/studio',
+    name: 'A2DStudio',
     component: StageView,
   },
   {

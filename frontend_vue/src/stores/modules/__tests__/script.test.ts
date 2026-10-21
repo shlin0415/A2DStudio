@@ -54,4 +54,43 @@ describe('manual script editing', () => {
     expect(store.lines[1].index).toBe(1)
     expect(store.lines[1].audio_path).toBe('/audio/a2d_first.wav')
   })
+
+  it('preserves active playback when generation returns to thinking for the next line', () => {
+    const store = useScriptStore()
+    const line = store.createManualLine('ema')
+    store.setPhase('thinking')
+    store.setPhase('synthesizing')
+    store.playingLineId = line.id
+    store.isAudioPlaying = true
+
+    store.setPhase('thinking')
+
+    expect(store.playingLineId).toBe(line.id)
+    expect(store.isAudioPlaying).toBe(true)
+  })
+
+  it('clears stale playback state when a new batch begins after pause', () => {
+    const store = useScriptStore()
+    const line = store.createManualLine('ema')
+    store.playingLineId = line.id
+    store.setPhase('paused')
+
+    store.setPhase('thinking')
+
+    expect(store.playingLineId).toBeNull()
+    expect(store.isAudioPlaying).toBe(false)
+  })
+
+  it('keeps playback state when a new generation starts before the current audio ends', () => {
+    const store = useScriptStore()
+    const line = store.createManualLine('ema')
+    store.playingLineId = line.id
+    store.isAudioPlaying = true
+    store.setPhase('paused')
+
+    store.setPhase('thinking')
+
+    expect(store.playingLineId).toBe(line.id)
+    expect(store.isAudioPlaying).toBe(true)
+  })
 })
