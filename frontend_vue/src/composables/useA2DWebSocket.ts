@@ -202,6 +202,7 @@ async function playNextInQueue(
     onAudioFinished?.(item.lineId)
     await waitForStageActions(item.lineId)
     if (itemGeneration !== audioGeneration) return
+    if (event === 'audio_end') emitTrace('line_complete', { lineId: item.lineId })
     const continueAudio = (await onEnded?.()) ?? true
     if (continueAudio) playNextInQueue(store, onItemStart, onEnded, onAudioFinished)
     else {

@@ -41,4 +41,21 @@ describe('A2D timing trace privacy', () => {
     expect(JSON.stringify(consoleInfo.mock.calls)).not.toContain('private dialogue')
     expect(JSON.stringify(consoleInfo.mock.calls)).toContain('line-2')
   })
+
+  it('exports line completion with its identifier and no content or resource paths', () => {
+    const safe = sanitizeTraceEntry({
+      ts: 5,
+      wall: 1700000000000,
+      event: 'line_complete',
+      data: {
+        lineId: 'line-3',
+        tts_text: 'private dialogue',
+        audio_url: 'http://127.0.0.1:8765/audio/private.wav',
+      },
+    })
+
+    expect(safe.data).toEqual({ lineId: 'line-3' })
+    expect(JSON.stringify(safe)).not.toContain('private dialogue')
+    expect(JSON.stringify(safe)).not.toContain('private.wav')
+  })
 })

@@ -27,6 +27,7 @@ const SAFE_TRACE_FIELDS: Record<string, readonly string[]> = {
   preroll_start: ['lineId', 'firstPlay'],
   preroll_end: ['lineId', 'preRollMs'],
   audio_end: ['lineId'],
+  line_complete: ['lineId'],
   audio_error: ['lineId'],
   audio_play_failed: ['lineId'],
   emotion: ['lineId'],

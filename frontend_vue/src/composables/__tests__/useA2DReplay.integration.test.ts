@@ -8,6 +8,7 @@ import { useGameStore } from '@/stores/modules/game'
 import { audioQueue, isAudioPlaying } from '@/composables/audio-queue'
 import { useA2DReplay, _resetReplaySingleton } from '@/composables/useA2DReplay'
 import { _resetStageActions, beginStageAction, endStageAction } from '@/composables/a2d-stage-actions'
+import { dumpTrace } from '@/utils/a2d-trace'
 import { getCurrentBGM, playBGM, stopBGM } from '@/composables/useA2DBGM'
 
 describe('playNextInQueue callback threading (B1/B2 fix)', () => {
@@ -156,6 +157,7 @@ describe('playNextInQueue callback threading (B1/B2 fix)', () => {
     })
 
     try {
+      dumpTrace()
       const store = useScriptStore()
       store.addLine(makeLine('replay-action', 0, { display_text: '动作期间保持这一句' }))
       store.addLine(makeLine('replay-next', 1, { display_text: '动作结束后再显示' }))
@@ -171,6 +173,7 @@ describe('playNextInQueue callback threading (B1/B2 fix)', () => {
       expect(store.playingLineId).toBe('replay-action')
       expect(replay.currentSubtitle.value).toBe('动作期间保持这一句')
       expect(onendedHandlers).toHaveLength(1)
+      expect(window.__a2dTrace.some(entry => entry.event === 'line_complete')).toBe(false)
 
       endStageAction(action, 'completed')
       await new Promise(resolve => originalSetTimeout(resolve, 5))
@@ -178,6 +181,14 @@ describe('playNextInQueue callback threading (B1/B2 fix)', () => {
       expect(store.playingLineId).toBe('replay-next')
       expect(replay.currentSubtitle.value).toBe('动作结束后再显示')
       expect(onendedHandlers).toHaveLength(2)
+      const completedIndex = window.__a2dTrace.findIndex(
+        entry => entry.event === 'line_complete' && entry.data?.lineId === 'replay-action',
+      )
+      const nextLineIndex = window.__a2dTrace.findIndex(
+        entry => entry.event === 'playingLine' && entry.data?.lineId === 'replay-next',
+      )
+      expect(completedIndex).toBeGreaterThanOrEqual(0)
+      expect(completedIndex).toBeLessThan(nextLineIndex)
     } finally {
       vi.restoreAllMocks()
     }
@@ -692,6 +703,7 @@ describe('playNextInQueue callback threading (B1/B2 fix)', () => {
     })
 
     try {
+      dumpTrace()
       const store = useScriptStore()
       store.addLine(makeLine('silent-action', 0, { speaker: 'narrator', audio_path: null }))
       store.addLine(makeLine('after-action', 1))
@@ -704,11 +716,20 @@ describe('playNextInQueue callback threading (B1/B2 fix)', () => {
       await Promise.resolve()
       expect(store.playingLineId).toBe('silent-action')
       expect(replay.currentSubtitle.value).toBe('文本silent-action')
+      expect(window.__a2dTrace.some(entry => entry.event === 'line_complete')).toBe(false)
 
       endStageAction(action, 'completed')
       await Promise.resolve()
 
       expect(store.playingLineId).toBe('after-action')
+      const completedIndex = window.__a2dTrace.findIndex(
+        entry => entry.event === 'line_complete' && entry.data?.lineId === 'silent-action',
+      )
+      const nextLineIndex = window.__a2dTrace.findIndex(
+        entry => entry.event === 'playingLine' && entry.data?.lineId === 'after-action',
+      )
+      expect(completedIndex).toBeGreaterThanOrEqual(0)
+      expect(completedIndex).toBeLessThan(nextLineIndex)
     } finally {
       vi.restoreAllMocks()
     }

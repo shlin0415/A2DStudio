@@ -5,6 +5,7 @@ import { audioQueue, isAudioPlaying } from '@/composables/audio-queue'
 import { playNextInQueue, setReplayActive, pauseCurrentAudio, stopCurrentAudio, mainAudioPlay } from '@/composables/useA2DWebSocket'
 import { playBGM, stopBGM } from '@/composables/useA2DBGM'
 import { waitForStageActions } from '@/composables/a2d-stage-actions'
+import { emitTrace } from '@/utils/a2d-trace'
 import type { ReplayState } from '@/composables/types'
 import type { ScriptLine } from '@/stores/modules/script'
 
@@ -151,6 +152,7 @@ export function useA2DReplay() {
   async function continueAfterSilentLine(line: ScriptLine): Promise<void> {
     await waitForStageActions(line.id)
     if (_state!.value !== 'playing' || scriptStore.playingLineId !== line.id) return
+    emitTrace('line_complete', { lineId: line.id })
     advance()
     // After advancing, determine what to do with the new current line.
     const newId = scriptStore.playingLineId
