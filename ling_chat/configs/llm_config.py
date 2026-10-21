@@ -16,6 +16,8 @@ except ImportError:
 from ling_chat.core.logger import logger
 from ling_chat.utils.runtime_path import package_root
 
+_MODEL_ENV_PROFILES = (("DS", "deepseek"), ("MIMO", "mimo"))
+
 
 class LLMConfig:
     """LLM配置管理器单例类
@@ -333,18 +335,27 @@ class LLMConfig:
     def get_main_config(self) -> Dict[str, Any]:
         """获取主对话模型配置（合入默认值，新键自动补全）
 
-        Env vars override TOML values so .env changes take effect on restart
-        without needing to delete the cached TOML.
+        DeepSeek and MiMo profiles use their own .env aliases. Generic CHAT_*
+        values apply only to the default profile so they cannot shadow a
+        deliberately selected provider profile.
         """
         config = self._config.get("main", {})
         defaults = self._create_default_config()["main"]
         merged = {**defaults, **config}
 
-        # Env overrides: .env is the authoritative source for sensitive keys.
-        # CHAT_API_KEY / MODEL_TYPE / CHAT_BASE_URL override cached TOML.
-        _apply_env_override(merged, "api_key", "CHAT_API_KEY")
-        _apply_env_override(merged, "model", "MODEL_TYPE")
-        _apply_env_override(merged, "base_url", "CHAT_BASE_URL")
+        if self._active_config_name == "default":
+            _apply_env_override(merged, "api_key", "CHAT_API_KEY")
+            _apply_env_override(merged, "model", "MODEL_TYPE")
+            _apply_env_override(merged, "base_url", "CHAT_BASE_URL")
+            return merged
+
+        model_name = str(merged.get("model", "")).lower()
+        for suffix, model_prefix in _MODEL_ENV_PROFILES:
+            if model_name.startswith(model_prefix):
+                _apply_env_override(merged, "api_key", f"CHAT_API_KEY_{suffix}")
+                _apply_env_override(merged, "model", f"MODEL_TYPE_{suffix}")
+                _apply_env_override(merged, "base_url", f"CHAT_BASE_URL_{suffix}")
+                break
 
         return merged
 

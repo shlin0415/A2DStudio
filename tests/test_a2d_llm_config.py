@@ -1,9 +1,8 @@
-"""Test LLM config env-override mechanism.
-
-_env_apply_override ensures .env always wins over cached TOML values.
-"""
+"""Test LLM config environment precedence and active-profile switching."""
 
 import os
+from unittest.mock import Mock
+
 import pytest
 
 
@@ -74,3 +73,122 @@ class TestGetMainConfigOverrides:
         assert "api_key" in cfg
         assert "model" in cfg
         assert "base_url" in cfg
+
+
+def test_default_profile_prefers_generic_environment(monkeypatch):
+    from ling_chat.configs.llm_config import llm_config
+
+    monkeypatch.setattr(llm_config, "_active_config_name", "default")
+    monkeypatch.setattr(
+        llm_config,
+        "_config",
+        {
+            "main": {
+                "provider": "webllm",
+                "model": "deepseek-stale-profile-model",
+                "api_key": "profile-key",
+                "base_url": "https://profile.invalid/v1",
+            }
+        },
+    )
+    monkeypatch.setenv("CHAT_API_KEY", "generic-key")
+    monkeypatch.setenv("CHAT_BASE_URL", "https://generic.invalid/v1")
+    monkeypatch.setenv("MODEL_TYPE", "mimo-default-model")
+    monkeypatch.setenv("CHAT_API_KEY_DS", "ds-key")
+    monkeypatch.setenv("CHAT_BASE_URL_DS", "https://ds.invalid/v1")
+    monkeypatch.setenv("MODEL_TYPE_DS", "deepseek-model")
+
+    config = llm_config.get_main_config()
+
+    assert config["api_key"] == "generic-key"
+    assert config["base_url"] == "https://generic.invalid/v1"
+    assert config["model"] == "mimo-default-model"
+
+
+@pytest.mark.parametrize(
+    ("suffix", "profile_model", "env_model"),
+    [
+        ("DS", "deepseek-chat", "deepseek-test-model"),
+        ("MIMO", "mimo-chat", "mimo-test-model"),
+    ],
+)
+def test_active_profile_uses_its_provider_environment(
+    monkeypatch, suffix, profile_model, env_model
+):
+    from ling_chat.configs.llm_config import llm_config
+
+    monkeypatch.setattr(llm_config, "_active_config_name", "profile")
+    monkeypatch.setattr(
+        llm_config,
+        "_config",
+        {
+            "main": {
+                "provider": "webllm",
+                "model": profile_model,
+                "api_key": "profile-key",
+                "base_url": "https://profile.invalid/v1",
+            }
+        },
+    )
+    monkeypatch.setenv("CHAT_API_KEY", "generic-key")
+    monkeypatch.setenv("CHAT_BASE_URL", "https://generic.invalid/v1")
+    monkeypatch.setenv("MODEL_TYPE", "generic-model")
+    monkeypatch.setenv(f"CHAT_API_KEY_{suffix}", f"{suffix.lower()}-key")
+    monkeypatch.setenv(
+        f"CHAT_BASE_URL_{suffix}", f"https://{suffix.lower()}.invalid/v1"
+    )
+    monkeypatch.setenv(f"MODEL_TYPE_{suffix}", env_model)
+
+    config = llm_config.get_main_config()
+
+    assert config["api_key"] == f"{suffix.lower()}-key"
+    assert config["base_url"] == f"https://{suffix.lower()}.invalid/v1"
+    assert config["model"] == env_model
+
+
+def test_switching_llm_profile_reloads_active_ai_service(monkeypatch):
+    import asyncio
+    from types import SimpleNamespace
+
+    from ling_chat.api import llm_config_api
+
+    reload_llm_model = Mock()
+    monkeypatch.setattr(
+        llm_config_api,
+        "service_manager",
+        SimpleNamespace(
+            ai_service=SimpleNamespace(reload_llm_model=reload_llm_model)
+        ),
+        raising=False,
+    )
+    monkeypatch.setattr(
+        llm_config_api.llm_config, "set_active_config", lambda _name: True
+    )
+
+    asyncio.run(
+        llm_config_api.switch_config(llm_config_api.SwitchConfigRequest(name="DS"))
+    )
+
+    reload_llm_model.assert_called_once_with()
+
+
+def test_reload_llm_model_updates_service_and_message_generator(monkeypatch):
+    from types import SimpleNamespace
+
+    from ling_chat.core.ai_service import core as ai_service_module
+
+    service = ai_service_module.AIService.__new__(ai_service_module.AIService)
+    previous_manager = object()
+    replacement_manager = object()
+    service.llm_model = previous_manager
+    service.message_generator = SimpleNamespace(
+        llm_model=previous_manager,
+        agent_runner=SimpleNamespace(llm_model=previous_manager),
+    )
+    monkeypatch.setattr(ai_service_module, "LLMManager", lambda: replacement_manager)
+
+    service.reload_llm_model()
+
+    assert service.llm_model is replacement_manager
+    assert service.message_generator.llm_model is replacement_manager
+    assert service.message_generator.agent_runner.llm_model is replacement_manager

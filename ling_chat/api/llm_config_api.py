@@ -15,6 +15,7 @@ from ling_chat.configs.llm_toml_config import (
     parse_llm_toml,
 )
 from ling_chat.core.logger import logger
+from ling_chat.core.service_manager import service_manager
 
 router = APIRouter(prefix="/api/v1/llm-config", tags=["LLM Config"])
 
@@ -86,6 +87,8 @@ async def switch_config(request: SwitchConfigRequest) -> Dict[str, str]:
             raise HTTPException(
                 status_code=404, detail=f"配置方案不存在: {request.name}"
             )
+        if service_manager.ai_service is not None:
+            service_manager.ai_service.reload_llm_model()
         return {
             "status": "success",
             "message": f"已切换到配置方案: {request.name}",

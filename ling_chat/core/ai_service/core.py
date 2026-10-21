@@ -140,6 +140,13 @@ class AIService:
         # self.events_scheduler.ai_name = self.ai_name
         # self.events_scheduler.user_name = self.user_name
 
+    def reload_llm_model(self) -> None:
+        """Rebuild the model client from the currently active LLM profile."""
+        self.llm_model = LLMManager()
+        self.message_generator.llm_model = self.llm_model
+        self.message_generator.agent_runner.llm_model = self.llm_model
+        logger.info("LLMManager 已按当前配置重建并替换。")
+
     def apply_runtime_config(self, updates: dict[str, str]) -> None:
         """
         根据运行时更新的配置，热重载关键组件，避免重启。
@@ -157,9 +164,7 @@ class AIService:
                 "TRANSLATE_BASE_URL",
             }
             if any(k in updates for k in llm_keys):
-                self.llm_model = LLMManager()
-                self.message_generator.llm_model = self.llm_model
-                logger.info("运行时配置更新：LLMManager 已重建并替换。")
+                self.reload_llm_model()
 
             if "COMSUMERS" in updates:
                 try:
