@@ -19,6 +19,12 @@
         <button type="button" data-testid="open-project" @click="triggerProjectImport">
           打开项目包
         </button>
+        <button type="button" data-testid="save-project-folder" @click="saveProjectFolder">
+          保存到项目文件夹
+        </button>
+        <button type="button" data-testid="open-project-folder" @click="openProjectFolder">
+          打开项目文件夹
+        </button>
         <button type="button" data-testid="add-ema-line" @click="store.createManualLine('ema')">
           ＋ 添加艾玛台词
         </button>
@@ -142,7 +148,13 @@
 import { computed, ref } from 'vue'
 import { useScriptStore, type ScriptLine } from '@/stores/modules/script'
 import { useA2DWebSocket } from '@/composables/useA2DWebSocket'
-import { exportA2DProject, importA2DProject } from '@/composables/useA2DProject'
+import {
+  exportA2DProject,
+  importA2DProject,
+  openA2DProjectFromDirectory,
+  pickA2DProjectDirectory,
+  saveA2DProjectToDirectory,
+} from '@/composables/useA2DProject'
 
 const store = useScriptStore()
 const { sendRegenerateTTS, availableSpeakers, isInitialized } = useA2DWebSocket()
@@ -201,6 +213,43 @@ async function exportProject(): Promise<void> {
   }
 }
 
+function showDirectoryActionError(error: unknown): void {
+  if (error instanceof DOMException && error.name === 'AbortError') {
+    projectMessage.value = '已取消文件夹选择'
+    projectError.value = false
+    return
+  }
+  projectError.value = true
+  projectMessage.value = error instanceof Error ? error.message : '项目文件夹操作失败'
+}
+
+async function saveProjectFolder(): Promise<void> {
+  projectMessage.value = ''
+  projectError.value = false
+  try {
+    const directory = await pickA2DProjectDirectory('readwrite')
+    await saveA2DProjectToDirectory(directory)
+    projectMessage.value = '项目文件夹已保存'
+  } catch (error) {
+    showDirectoryActionError(error)
+  }
+}
+
+async function openProjectFolder(): Promise<void> {
+  projectMessage.value = ''
+  projectError.value = false
+  try {
+    const directory = await pickA2DProjectDirectory('read')
+    const result = await openA2DProjectFromDirectory(directory)
+    projectError.value = !result.ok
+    projectMessage.value = result.ok
+      ? `项目已打开（${store.lines.length} 句）`
+      : result.error || '项目文件夹打开失败'
+  } catch (error) {
+    showDirectoryActionError(error)
+  }
+}
+
 function triggerProjectImport(): void {
   projectMessage.value = ''
   projectError.value = false
@@ -239,6 +288,8 @@ async function importProject(event: Event): Promise<void> {
   align-items: center;
   gap: 8px;
 }
+
+.script-editor__add-actions { flex-wrap: wrap; }
 
 .script-editor__header,
 .script-editor__row,

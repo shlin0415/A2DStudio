@@ -4,14 +4,17 @@ import { useScriptStore, type ImageOverlay, type LineOverlay, type ScriptLine, t
 import {
   A2D_PROJECT_FORMAT,
   A2D_PROJECT_MAX_ARCHIVE_BYTES,
+  A2D_PROJECT_MAX_ENTRY_BYTES,
+  A2D_PROJECT_MAX_EXPANDED_BYTES,
   A2D_PROJECT_MAX_MANIFEST_BYTES,
   A2D_PROJECT_SCHEMA_VERSION,
+  nextProjectByteCount,
   validateProjectManifest,
   type A2DProjectLine,
   type A2DProjectManifest,
   type A2DProjectRole,
 } from './a2d-project-format'
-import { readProjectArchive } from './a2d-project-archive'
+import { readProjectArchive, writeProjectArchive } from './a2d-project-archive'
 import { packA2DProject } from './a2d-project-export'
 import { registerImportedProjectAssets, getProjectAvatarRegistryKey } from './a2d-project-runtime-assets'
 import { buildExportEnvelope, importSession, type ExportEnvelope, type ImportResult } from './useA2DSaveLoad'
@@ -19,11 +22,148 @@ import { buildExportEnvelope, importSession, type ExportEnvelope, type ImportRes
 const DOWNLOAD_URL_REVOKE_DELAY_MS = 1000
 const PROJECT_RUNTIME_ROLE_ID_START = -1_000_000
 
+interface A2DDirectoryPickerWindow extends Window {
+  showDirectoryPicker?: (options?: { mode: 'read' | 'readwrite' }) => Promise<FileSystemDirectoryHandle>
+}
+
 function safeTitle(title: string): string {
   return title.replace(/[<>:"/\\|?*\u0000-\u001f]/g, '_').trim() || 'a2d-project'
 }
 
 export { packA2DProject }
+
+function copyBytesToArrayBuffer(bytes: Uint8Array): ArrayBuffer {
+  const copy = new Uint8Array(bytes.byteLength)
+  copy.set(bytes)
+  return copy.buffer
+}
+
+function isNotFoundError(error: unknown): boolean {
+  return error instanceof DOMException && error.name === 'NotFoundError'
+}
+
+async function getDirectoryFileHandle(
+  directory: FileSystemDirectoryHandle,
+  path: string,
+  create: boolean,
+): Promise<FileSystemFileHandle> {
+  const parts = path.split('/')
+  let currentDirectory = directory
+  for (const part of parts.slice(0, -1)) {
+    currentDirectory = await currentDirectory.getDirectoryHandle(part, { create })
+  }
+  return currentDirectory.getFileHandle(parts[parts.length - 1]!, { create })
+}
+
+async function readDirectoryFile(directory: FileSystemDirectoryHandle, path: string): Promise<File> {
+  try {
+    return await (await getDirectoryFileHandle(directory, path, false)).getFile()
+  } catch (error) {
+    if (isNotFoundError(error)) throw new Error(`项目文件夹缺少文件：${path}`)
+    throw error
+  }
+}
+
+async function writeDirectoryFile(directory: FileSystemDirectoryHandle, path: string, bytes: Uint8Array): Promise<void> {
+  const fileHandle = await getDirectoryFileHandle(directory, path, true)
+  const writable = await fileHandle.createWritable()
+  try {
+    await writable.write(copyBytesToArrayBuffer(bytes))
+    await writable.close()
+  } catch (error) {
+    await writable.abort().catch(() => undefined)
+    throw error
+  }
+}
+
+async function hasExistingProjectManifest(directory: FileSystemDirectoryHandle): Promise<boolean> {
+  let manifestFile: File
+  try {
+    manifestFile = await (await directory.getFileHandle('project.json')).getFile()
+  } catch (error) {
+    if (isNotFoundError(error)) return false
+    throw error
+  }
+  if (manifestFile.size > A2D_PROJECT_MAX_MANIFEST_BYTES) throw new Error('目标文件夹的 project.json 超过 10 MiB 限制')
+
+  let manifest: unknown
+  try {
+    manifest = JSON.parse(new TextDecoder('utf-8', { fatal: true }).decode(await manifestFile.arrayBuffer()))
+  } catch {
+    throw new Error('目标文件夹已有无法识别的 project.json，已拒绝覆盖')
+  }
+  const validation = validateProjectManifest(manifest)
+  if (!validation.ok) throw new Error('目标文件夹已有无法识别的 project.json，已拒绝覆盖')
+  return true
+}
+
+async function ensureNewProjectDirectoryIsClear(directory: FileSystemDirectoryHandle): Promise<void> {
+  try {
+    await directory.getDirectoryHandle('assets')
+  } catch (error) {
+    if (isNotFoundError(error)) return
+    throw error
+  }
+  throw new Error('目标文件夹已有 assets 目录且没有有效的 A2D project.json，已拒绝覆盖')
+}
+
+/** Save the current project as the same readable v2 directory used by ZIP export. */
+export async function saveA2DProjectToDirectory(directory: FileSystemDirectoryHandle): Promise<void> {
+  const script = useScriptStore()
+  const archive = await packA2DProject(buildExportEnvelope(), script.projectName)
+  const archiveFile = new File([copyBytesToArrayBuffer(archive)], 'project.a2d.zip', { type: 'application/zip' })
+  const files = await readProjectArchive(archiveFile)
+  const manifestBytes = files.get('project.json')
+  if (!manifestBytes) throw new Error('项目包缺少 project.json')
+
+  const resourcePaths = [...files.keys()].filter((path) => path !== 'project.json')
+  const hasProjectManifest = await hasExistingProjectManifest(directory)
+  if (!hasProjectManifest) await ensureNewProjectDirectoryIsClear(directory)
+  for (const path of resourcePaths) await writeDirectoryFile(directory, path, files.get(path)!)
+  await writeDirectoryFile(directory, 'project.json', manifestBytes)
+}
+
+/** Open a readable v2 project directory, rebuilding a ZIP for the shared importer validation. */
+export async function openA2DProjectFromDirectory(directory: FileSystemDirectoryHandle): Promise<ImportResult> {
+  try {
+    const manifestFile = await readDirectoryFile(directory, 'project.json')
+    if (manifestFile.size > A2D_PROJECT_MAX_MANIFEST_BYTES) throw new Error('project.json 超过 10 MiB 限制')
+    const manifestBytes = new Uint8Array(await manifestFile.arrayBuffer())
+    let rawManifest: unknown
+    try {
+      rawManifest = JSON.parse(new TextDecoder('utf-8', { fatal: true }).decode(manifestBytes))
+    } catch {
+      throw new Error('project.json 不是有效的 UTF-8 JSON')
+    }
+    const validation = validateProjectManifest(rawManifest)
+    if (!validation.ok) throw new Error(validation.error || '项目清单无效')
+
+    const manifest = rawManifest as A2DProjectManifest
+    const files: Record<string, Uint8Array> = { 'project.json': manifestBytes }
+    let expandedBytes = manifestBytes.byteLength
+    for (const resource of manifest.resources) {
+      if (resource.byte_length > A2D_PROJECT_MAX_ENTRY_BYTES) throw new Error(`项目资源超过 128 MiB 限制：${resource.path}`)
+      const file = await readDirectoryFile(directory, resource.path)
+      if (file.size !== resource.byte_length) throw new Error(`项目资源大小与清单不一致：${resource.path}`)
+      expandedBytes = nextProjectByteCount(expandedBytes, file.size, A2D_PROJECT_MAX_EXPANDED_BYTES, 'directory expanded bytes')
+      files[resource.path] = new Uint8Array(await file.arrayBuffer())
+    }
+
+    const archive = await writeProjectArchive(files)
+    if (archive.byteLength > A2D_PROJECT_MAX_ARCHIVE_BYTES) throw new Error('项目压缩包超过 512 MiB 限制')
+    return importA2DProject(new File([copyBytesToArrayBuffer(archive)], 'project.a2d.zip', { type: 'application/zip' }))
+  } catch (error) {
+    return { ok: false, error: error instanceof Error ? error.message : '项目文件夹读取失败' }
+  }
+}
+
+export async function pickA2DProjectDirectory(mode: 'read' | 'readwrite'): Promise<FileSystemDirectoryHandle> {
+  const pickerWindow = window as A2DDirectoryPickerWindow
+  if (!pickerWindow.showDirectoryPicker) {
+    throw new Error('当前浏览器不支持项目文件夹读写，请使用 ZIP 项目包导入或导出')
+  }
+  return pickerWindow.showDirectoryPicker({ mode })
+}
 
 export async function exportA2DProject(): Promise<void> {
   const script = useScriptStore()
