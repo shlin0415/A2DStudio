@@ -76,12 +76,12 @@ async function writeDirectoryFile(directory: FileSystemDirectoryHandle, path: st
   }
 }
 
-async function hasExistingProjectManifest(directory: FileSystemDirectoryHandle): Promise<boolean> {
+async function hasExistingProjectManifest(directory: FileSystemDirectoryHandle): Promise<A2DProjectManifest | null> {
   let manifestFile: File
   try {
     manifestFile = await (await directory.getFileHandle('project.json')).getFile()
   } catch (error) {
-    if (isNotFoundError(error)) return false
+    if (isNotFoundError(error)) return null
     throw error
   }
   if (manifestFile.size > A2D_PROJECT_MAX_MANIFEST_BYTES) throw new Error('目标文件夹的 project.json 超过 10 MiB 限制')
@@ -94,17 +94,128 @@ async function hasExistingProjectManifest(directory: FileSystemDirectoryHandle):
   }
   const validation = validateProjectManifest(manifest)
   if (!validation.ok) throw new Error('目标文件夹已有无法识别的 project.json，已拒绝覆盖')
-  return true
+  return manifest as A2DProjectManifest
 }
 
-async function ensureNewProjectDirectoryIsClear(directory: FileSystemDirectoryHandle): Promise<void> {
+async function findDirectoryFile(directory: FileSystemDirectoryHandle, path: string): Promise<File | null> {
   try {
-    await directory.getDirectoryHandle('assets')
+    return await (await getDirectoryFileHandle(directory, path, false)).getFile()
   } catch (error) {
-    if (isNotFoundError(error)) return
+    if (isNotFoundError(error)) return null
     throw error
   }
-  throw new Error('目标文件夹已有 assets 目录且没有有效的 A2D project.json，已拒绝覆盖')
+}
+
+interface DirectoryResourceWrite {
+  path: string
+  bytes: Uint8Array
+}
+
+function createUniqueResourcePath(path: string): string {
+  const separator = path.lastIndexOf('/')
+  const filename = path.slice(separator + 1)
+  const extensionIndex = filename.lastIndexOf('.')
+  const basename = extensionIndex > 0 ? filename.slice(0, extensionIndex) : filename
+  const extension = extensionIndex > 0 ? filename.slice(extensionIndex) : ''
+  return `${path.slice(0, separator + 1)}${basename}-${crypto.randomUUID()}${extension}`
+}
+
+async function fileMatchesBytes(file: File, expectedBytes: Uint8Array): Promise<boolean> {
+  if (file.size !== expectedBytes.byteLength) return false
+  const reader = file.stream().getReader()
+  let offset = 0
+  let matches = true
+  try {
+    while (true) {
+      const { done, value } = await reader.read()
+      if (done) break
+      for (let index = 0; index < value.byteLength; index += 1) {
+        if (value[index] !== expectedBytes[offset + index]) matches = false
+      }
+      offset += value.byteLength
+    }
+  } finally {
+    reader.releaseLock()
+  }
+  return matches && offset === expectedBytes.byteLength
+}
+
+async function planDirectoryResourceWrites(
+  directory: FileSystemDirectoryHandle,
+  manifest: A2DProjectManifest,
+  archiveFiles: Map<string, Uint8Array>,
+  existingManifest: A2DProjectManifest | null,
+): Promise<{ replacements: Map<string, string>; writes: DirectoryResourceWrite[] }> {
+  const replacements = new Map<string, string>()
+  const writes: DirectoryResourceWrite[] = []
+
+  for (const resource of manifest.resources) {
+    const originalPath = resource.path
+    const bytes = archiveFiles.get(originalPath)
+    if (!bytes) throw new Error(`项目包缺少资源：${originalPath}`)
+
+    const existingFile = await findDirectoryFile(directory, originalPath)
+    const previousResource = existingManifest?.resources.find(
+      (candidate) => candidate.path === originalPath && candidate.kind === resource.kind,
+    )
+    let targetPath = originalPath
+    let shouldWrite = true
+
+    if (existingFile && !existingManifest) {
+      targetPath = createUniqueResourcePath(originalPath)
+    } else if (existingFile && previousResource) {
+      if (await fileMatchesBytes(existingFile, bytes)) shouldWrite = false
+      else targetPath = createUniqueResourcePath(originalPath)
+    }
+
+    if (targetPath !== originalPath && await findDirectoryFile(directory, targetPath)) {
+      throw new Error(`项目资源路径冲突：${targetPath}`)
+    }
+    replacements.set(originalPath, targetPath)
+    if (shouldWrite) writes.push({ path: targetPath, bytes })
+  }
+
+  return { replacements, writes }
+}
+
+function remapProjectResourceReferences(
+  manifest: A2DProjectManifest,
+  replacements: Map<string, string>,
+): void {
+  const remap = (path: string | null): string | null => {
+    if (path === null) return null
+    const replacement = replacements.get(path)
+    if (!replacement) throw new Error(`项目清单引用了未打包的资源：${path}`)
+    return replacement
+  }
+
+  for (const resource of manifest.resources) resource.path = remap(resource.path)!
+  for (const role of manifest.roles) {
+    role.reference_audio_path = remap(role.reference_audio_path)
+    for (const emotion of Object.keys(role.avatar_assets)) {
+      role.avatar_assets[emotion] = remap(role.avatar_assets[emotion]!)!
+    }
+  }
+  for (const line of manifest.script.lines) {
+    line.audio_path = remap(line.audio_path)
+    if (!line.overlay) continue
+    line.overlay.ref_audio_path = remap(line.overlay.ref_audio_path ?? null)
+    line.overlay.background = remap(line.overlay.background)
+    line.overlay.bgm = remap(line.overlay.bgm)
+    for (const image of line.overlay.image_overlays) image.path = remap(image.path)!
+  }
+  for (const stage of manifest.script.stages) {
+    stage.default_background = remap(stage.default_background)
+  }
+}
+
+/** Remove the empty manifest created by a failed first save so the user can retry. */
+async function removeNewProjectManifest(directory: FileSystemDirectoryHandle): Promise<void> {
+  try {
+    await directory.removeEntry('project.json')
+  } catch (error) {
+    if (!isNotFoundError(error)) throw error
+  }
 }
 
 /** Save the current project as the same readable v2 directory used by ZIP export. */
@@ -113,14 +224,31 @@ export async function saveA2DProjectToDirectory(directory: FileSystemDirectoryHa
   const archive = await packA2DProject(buildExportEnvelope(), script.projectName)
   const archiveFile = new File([copyBytesToArrayBuffer(archive)], 'project.a2d.zip', { type: 'application/zip' })
   const files = await readProjectArchive(archiveFile)
-  const manifestBytes = files.get('project.json')
-  if (!manifestBytes) throw new Error('项目包缺少 project.json')
+  const sourceManifestBytes = files.get('project.json')
+  if (!sourceManifestBytes) throw new Error('项目包缺少 project.json')
+  const parsedManifest = parseManifest(sourceManifestBytes)
+  if ('error' in parsedManifest) throw new Error(parsedManifest.error)
+  const manifest = parsedManifest.manifest
+  const existingManifest = await hasExistingProjectManifest(directory)
+  const resourcePlan = await planDirectoryResourceWrites(directory, manifest, files, existingManifest)
+  remapProjectResourceReferences(manifest, resourcePlan.replacements)
 
-  const resourcePaths = [...files.keys()].filter((path) => path !== 'project.json')
-  const hasProjectManifest = await hasExistingProjectManifest(directory)
-  if (!hasProjectManifest) await ensureNewProjectDirectoryIsClear(directory)
-  for (const path of resourcePaths) await writeDirectoryFile(directory, path, files.get(path)!)
-  await writeDirectoryFile(directory, 'project.json', manifestBytes)
+  const validation = validateProjectManifest(manifest)
+  if (!validation.ok) throw new Error(`导出项目清单无效：${validation.error}`)
+  const manifestBytes = new TextEncoder().encode(JSON.stringify(manifest, null, 2))
+  if (manifestBytes.byteLength > A2D_PROJECT_MAX_MANIFEST_BYTES) throw new Error('project.json 超过 10 MiB 限制')
+  let expandedBytes = manifestBytes.byteLength
+  for (const resource of manifest.resources) {
+    expandedBytes = nextProjectByteCount(expandedBytes, resource.byte_length, A2D_PROJECT_MAX_EXPANDED_BYTES, 'directory expanded bytes')
+  }
+
+  for (const resource of resourcePlan.writes) await writeDirectoryFile(directory, resource.path, resource.bytes)
+  try {
+    await writeDirectoryFile(directory, 'project.json', manifestBytes)
+  } catch (error) {
+    if (!existingManifest) await removeNewProjectManifest(directory)
+    throw error
+  }
 }
 
 /** Open a readable v2 project directory, rebuilding a ZIP for the shared importer validation. */

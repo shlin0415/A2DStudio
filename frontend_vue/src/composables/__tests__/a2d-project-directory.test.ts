@@ -18,8 +18,13 @@ interface MemoryDirectory {
   entries: Map<string, MemoryDirectory | MemoryFile>
 }
 
-function createMemoryDirectory(): { node: MemoryDirectory; handle: FileSystemDirectoryHandle } {
+function createMemoryDirectory(): {
+  node: MemoryDirectory
+  handle: FileSystemDirectoryHandle
+  setProjectManifestWriteFailure(shouldFail: boolean): void
+} {
   const node: MemoryDirectory = { entries: new Map() }
+  let shouldFailProjectManifestWrite = false
 
   function createHandle(directory: MemoryDirectory): FileSystemDirectoryHandle {
     return {
@@ -49,6 +54,9 @@ function createMemoryDirectory(): { node: MemoryDirectory; handle: FileSystemDir
           async createWritable() {
             return {
               async write(value: FileSystemWriteChunkType) {
+                if (shouldFailProjectManifestWrite && name === 'project.json') {
+                  throw new Error('injected project manifest write failure')
+                }
                 if (value instanceof ArrayBuffer) file.bytes = new Uint8Array(value)
                 else if (value instanceof Uint8Array) file.bytes = new Uint8Array(value)
                 else throw new TypeError('Expected binary file content')
@@ -59,10 +67,19 @@ function createMemoryDirectory(): { node: MemoryDirectory; handle: FileSystemDir
           },
         } as unknown as FileSystemFileHandle
       },
+      async removeEntry(name: string) {
+        if (!directory.entries.delete(name)) throw new DOMException('Entry not found', 'NotFoundError')
+      },
     } as unknown as FileSystemDirectoryHandle
   }
 
-  return { node, handle: createHandle(node) }
+  return {
+    node,
+    handle: createHandle(node),
+    setProjectManifestWriteFailure(shouldFail: boolean) {
+      shouldFailProjectManifestWrite = shouldFail
+    },
+  }
 }
 
 function writeMemoryFile(root: MemoryDirectory, path: string, bytes: Uint8Array): void {
@@ -254,20 +271,24 @@ describe('A2D project directory', () => {
     expect(store.projectName).toBe('当前项目')
   })
 
-  it('does not overwrite an existing resource in a folder without an A2D manifest', async () => {
+  it('preserves an unrelated resource in a folder without an A2D manifest', async () => {
     const store = useScriptStore()
     store.lines = [line('/audio/a2d_line-1.wav')]
-    stubAudioFetch(new Uint8Array([82, 73, 70, 70, 87, 65, 86, 69]))
+    const projectAudio = new Uint8Array([82, 73, 70, 70, 87, 65, 86, 69])
+    stubAudioFetch(projectAudio)
     const directory = createMemoryDirectory()
     const existingBytes = new Uint8Array([1, 2, 3])
     writeMemoryFile(directory.node, 'assets/audio/line-0001.wav', existingBytes)
 
-    await expect(saveA2DProjectToDirectory(directory.handle)).rejects.toThrow('已拒绝覆盖')
+    await expect(saveA2DProjectToDirectory(directory.handle)).resolves.toBeUndefined()
 
     expect(Array.from(readMemoryFile(directory.node, 'assets/audio/line-0001.wav')!)).toEqual(
       Array.from(existingBytes),
     )
-    expect(readMemoryFile(directory.node, 'project.json')).toBeUndefined()
+    const manifest = JSON.parse(new TextDecoder().decode(readMemoryFile(directory.node, 'project.json')))
+    const savedAudioPath = manifest.resources[0].path
+    expect(savedAudioPath).not.toBe('assets/audio/line-0001.wav')
+    expect(Array.from(readMemoryFile(directory.node, savedAudioPath)!)).toEqual(Array.from(projectAudio))
   })
 
   it('reuses stale A2D asset paths when a resource is removed and later regenerated', async () => {
@@ -288,5 +309,49 @@ describe('A2D project directory', () => {
     expect(Array.from(readMemoryFile(directory.node, 'assets/audio/line-0001.wav')!)).toEqual(
       Array.from(replacementAudio),
     )
+  })
+
+  it('keeps the last saved project readable when publishing an updated manifest fails', async () => {
+    const store = useScriptStore()
+    const directory = createMemoryDirectory()
+    const originalAudio = new Uint8Array([82, 73, 70, 70, 87, 65, 86, 69])
+    stubAudioFetch(originalAudio)
+    store.projectName = '已保存项目'
+    store.lines = [line('/audio/a2d_line-1.wav')]
+    await saveA2DProjectToDirectory(directory.handle)
+    const originalManifest = readMemoryFile(directory.node, 'project.json')!.slice()
+    const originalAsset = readMemoryFile(directory.node, 'assets/audio/line-0001.wav')!.slice()
+
+    store.projectName = '未完成更新'
+    stubAudioFetch(new Uint8Array([82, 73, 70, 70, 78, 69, 87, 33, 33, 33, 33, 33]))
+    directory.setProjectManifestWriteFailure(true)
+
+    await expect(saveA2DProjectToDirectory(directory.handle)).rejects.toThrow('injected project manifest write failure')
+
+    expect(Array.from(readMemoryFile(directory.node, 'project.json')!)).toEqual(Array.from(originalManifest))
+    expect(Array.from(readMemoryFile(directory.node, 'assets/audio/line-0001.wav')!)).toEqual(Array.from(originalAsset))
+    const reopened = await openA2DProjectFromDirectory(directory.handle)
+    expect(reopened.ok).toBe(true)
+    expect(store.projectName).toBe('已保存项目')
+  })
+
+  it('can retry a new project after writing its manifest fails', async () => {
+    const store = useScriptStore()
+    const directory = createMemoryDirectory()
+    store.projectName = '可重试新项目'
+    store.lines = [line('/audio/a2d_line-1.wav')]
+    stubAudioFetch(new Uint8Array([82, 73, 70, 70, 87, 65, 86, 69]))
+    directory.setProjectManifestWriteFailure(true)
+
+    await expect(saveA2DProjectToDirectory(directory.handle)).rejects.toThrow('injected project manifest write failure')
+    expect(readMemoryFile(directory.node, 'project.json')).toBeUndefined()
+
+    directory.setProjectManifestWriteFailure(false)
+    stubAudioFetch(new Uint8Array([82, 73, 70, 70, 87, 65, 86, 69]))
+
+    await expect(saveA2DProjectToDirectory(directory.handle)).resolves.toBeUndefined()
+    const opened = await openA2DProjectFromDirectory(directory.handle)
+    expect(opened.ok).toBe(true)
+    expect(store.projectName).toBe('可重试新项目')
   })
 })
