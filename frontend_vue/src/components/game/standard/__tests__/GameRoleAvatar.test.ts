@@ -7,7 +7,10 @@ import { getProjectAvatarRegistryKey, registerImportedProjectAssets } from '@/co
 const mocks = vi.hoisted(() => ({
   emitTrace: vi.fn(),
   gameStore: { command: null as string | null, presentRoleIds: [1] },
-  scriptStore: { playingLineId: 'line-7' as string | null },
+  scriptStore: {
+    playingLineId: 'line-7' as string | null,
+    lines: [{ id: 'line-7', speaker: 'ema' }],
+  },
 }))
 
 vi.mock('@/utils/a2d-trace', () => ({ emitTrace: mocks.emitTrace }))
@@ -24,7 +27,7 @@ vi.mock('@/controllers/emotion/config', () => ({
 function makeRole() {
   return reactive({
     roleId: 1,
-    scriptRoleKey: undefined as string | undefined,
+    scriptRoleKey: 'ema' as string | undefined,
     roleName: 'ema',
     roleSubTitle: '',
     thinkMessage: '',

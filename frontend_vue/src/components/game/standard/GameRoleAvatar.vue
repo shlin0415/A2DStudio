@@ -121,70 +121,82 @@ const targetAvatarUrl = computed(() => {
   return `/api/v1/chat/character/get_avatar/${r.roleId}/${mappedEmotion}/${clothesName}`
 })
 
+// Same-emotion lines still need a fresh wait owned only by their speaker's avatar.
+const activeActionLineId = computed(() => {
+  const lineId = scriptStore.playingLineId
+  if (!lineId || !role.value.scriptRoleKey) return null
+  const line = scriptStore.lines.find((candidate) => candidate.id === lineId)
+  return line?.speaker === role.value.scriptRoleKey ? lineId : null
+})
+
+async function applyEmotionEffects(newEmotion: string, actionLineId: string | null): Promise<void> {
+  const currentId = ++latestEmotionId
+  const config = EMOTION_CONFIG[newEmotion]
+  if (activeAnimationAction) endStageAction(activeAnimationAction, 'cancelled')
+  if (activeBubbleAction) endStageAction(activeBubbleAction, 'cancelled')
+  activeAnimationAction = null
+  activeBubbleAction = null
+  activeAnimationName = ''
+  if (bubbleTimeoutId !== null) {
+    window.clearTimeout(bubbleTimeoutId)
+    bubbleTimeoutId = null
+  }
+
+  if (config?.animation && config.animation !== 'none') {
+    activeAnimationAction = beginStageAction('animation', actionLineId, role.value.roleId)
+  }
+  if (config?.bubbleImage && config.bubbleImage !== 'none') {
+    activeBubbleAction = beginStageAction('bubble', actionLineId, role.value.roleId)
+  }
+
+  // 1. 等待 Vue computed(targetAvatarUrl) 更新并传递给子组件
+  await nextTick()
+
+  // 2. 等待子组件的图片加载 Promise 结束
+  if (imageFadeRef.value) {
+    await imageFadeRef.value.waitForLoad()
+  }
+
+  // 检查是否仍然是最新的表情更新
+  if (currentId !== latestEmotionId) return
+
+  if (!config) return
+
+  if (config.animation && config.animation !== 'none') {
+    activeAnimationName = animationNameFromClass(config.animation)
+    activeAnimationClass.value = config.animation
+  } else {
+    activeAnimationClass.value = 'normal'
+  }
+
+  if (config.bubbleImage && config.bubbleImage !== 'none') {
+    const version = Date.now()
+    currentBubbleImageUrl.value = `${config.bubbleImage}?t=${version}#t=0.1`
+    currentBubbleClass.value = config.bubbleClass
+    isBubbleVisible.value = false
+    nextTick(() => {
+      if (currentId !== latestEmotionId) return
+      isBubbleVisible.value = true
+      bubbleTimeoutId = window.setTimeout(() => {
+        isBubbleVisible.value = false
+        bubbleTimeoutId = null
+      }, 2000)
+    })
+  }
+
+  if (config.audio && config.audio !== 'none' && bubbleAudio.value) {
+    bubbleAudio.value.src = config.audio
+    bubbleAudio.value.load()
+    bubbleAudio.value.play()
+  }
+}
+
 // 监听表情，配合子组件的加载状态播放特效
 watch(
-  () => role.value.emotion,
-  async (newEmotion) => {
-    const currentId = ++latestEmotionId
-    const actionLineId = scriptStore.playingLineId
-    const config = EMOTION_CONFIG[newEmotion]
-    if (activeAnimationAction) endStageAction(activeAnimationAction, 'cancelled')
-    if (activeBubbleAction) endStageAction(activeBubbleAction, 'cancelled')
-    activeAnimationAction = null
-    activeBubbleAction = null
-    activeAnimationName = ''
-    if (bubbleTimeoutId !== null) {
-      window.clearTimeout(bubbleTimeoutId)
-      bubbleTimeoutId = null
-    }
-
-    if (config?.animation && config.animation !== 'none') {
-      activeAnimationAction = beginStageAction('animation', actionLineId, role.value.roleId)
-    }
-    if (config?.bubbleImage && config.bubbleImage !== 'none') {
-      activeBubbleAction = beginStageAction('bubble', actionLineId, role.value.roleId)
-    }
-
-    // 1. 等待 Vue computed(targetAvatarUrl) 更新并传递给子组件
-    await nextTick()
-
-    // 2. 等待子组件的图片加载 Promise 结束
-    if (imageFadeRef.value) {
-      await imageFadeRef.value.waitForLoad()
-    }
-
-    // 检查是否仍然是最新的表情更新
-    if (currentId !== latestEmotionId) return
-
-    if (!config) return
-
-    if (config.animation && config.animation !== 'none') {
-      activeAnimationName = animationNameFromClass(config.animation)
-      activeAnimationClass.value = config.animation
-    } else {
-      activeAnimationClass.value = 'normal'
-    }
-
-    if (config.bubbleImage && config.bubbleImage !== 'none') {
-      const version = Date.now()
-      currentBubbleImageUrl.value = `${config.bubbleImage}?t=${version}#t=0.1`
-      currentBubbleClass.value = config.bubbleClass
-      isBubbleVisible.value = false
-      nextTick(() => {
-        if (currentId !== latestEmotionId) return
-        isBubbleVisible.value = true
-        bubbleTimeoutId = window.setTimeout(() => {
-          isBubbleVisible.value = false
-          bubbleTimeoutId = null
-        }, 2000)
-      })
-    }
-
-    if (config.audio && config.audio !== 'none' && bubbleAudio.value) {
-      bubbleAudio.value.src = config.audio
-      bubbleAudio.value.load()
-      bubbleAudio.value.play()
-    }
+  [() => role.value.emotion, activeActionLineId],
+  ([newEmotion, actionLineId], previousValues) => {
+    if (!actionLineId && newEmotion === previousValues?.[0]) return
+    void applyEmotionEffects(newEmotion, actionLineId)
   },
   { immediate: true },
 )

@@ -123,6 +123,8 @@ describe('A2D generated playback holds preview through the real avatar actions',
       ...gameStore.gameRoles[1]!,
       roleId: runtimeRoleId,
       roleName: '艾玛',
+      emotion: '高兴',
+      originalEmotion: '高兴',
     }
     gameStore.importFromSnapshot({
       gameRoles: { [runtimeRoleId]: projectRole },
@@ -160,9 +162,13 @@ describe('A2D generated playback holds preview through the real avatar actions',
     expect(gameStore.gameRoles[runtimeRoleId]!.emotion).toBe('高兴')
 
     sendSocketMessage('status', { phase: 'thinking' })
-    sendSocketMessage('script_line', scriptLine('next-line', 1, '正常'))
+    sendSocketMessage('script_line', scriptLine('next-line', 1, '高兴'))
     sendSocketMessage('status', { phase: 'synthesizing' })
     sendSocketMessage('tts_ready', { id: 'next-line', audio_path: '/audio/next-line.wav' })
+    sendSocketMessage('status', { phase: 'thinking' })
+    sendSocketMessage('script_line', scriptLine('third-line', 2, '正常'))
+    sendSocketMessage('status', { phase: 'synthesizing' })
+    sendSocketMessage('tts_ready', { id: 'third-line', audio_path: '/audio/third-line.wav' })
     await flushPromises()
     expect(review.get('.preview-text').text()).toBe('字幕 project-line')
 
@@ -182,6 +188,25 @@ describe('A2D generated playback holds preview through the real avatar actions',
 
     expect(review.get('.preview-text').text()).toBe('字幕 next-line')
     expect(scriptStore.playingLineId).toBe('next-line')
+
+    await vi.advanceTimersByTimeAsync(200)
+    await flushPromises()
+    audioEndHandlers[1]?.()
+    await flushPromises()
+    expect(review.get('.preview-text').text()).toBe('字幕 next-line')
+
+    await avatar.get('.happy-bounce').trigger('animationend', { animationName: 'happyBounce' })
+    await flushPromises()
+    expect(review.get('.preview-text').text()).toBe('字幕 next-line')
+
+    await vi.advanceTimersByTimeAsync(2000)
+    const nextTransitionEnd = new Event('transitionend', { bubbles: true })
+    Object.defineProperty(nextTransitionEnd, 'propertyName', { value: 'opacity' })
+    avatar.get('.bubble').element.dispatchEvent(nextTransitionEnd)
+    await flushPromises()
+
+    expect(review.get('.preview-text').text()).toBe('字幕 third-line')
+    expect(scriptStore.playingLineId).toBe('third-line')
   })
 
   it('keeps the generated line visible until its audio, emotion animation, and bubble finish', async () => {

@@ -340,6 +340,7 @@ A2D 剧本项目与素材（单一项目格式）
 
 - [x] 2026-10-22 项目导入角色 ID 回归（`a2d-stage-playback.integration.test.ts`）：先经 A2D WebSocket 建立服务角色 ID `1`，再用 ZIP 导入角色使用的运行时 ID `-1000000` 替换 store，同时保留 `scriptRoleKey=ema`。测试确认表情与气泡动作都关联新运行时 ID；音频结束后仍保留第一句预览，直至两个舞台动作结束才切到下一句。该文件 2 项通过。生产 `useA2DReplay` 每次按当前 `gameRoles[].scriptRoleKey` 查找，不依赖旧 ID map；因此没有改生产逻辑。该测试使用 FakeAudio 且不是完整 `/studio` 浏览器验收。另一次隔离浏览器尝试只呈现静态 harness HTML，未确认模块挂载；已停止 Vite 并关闭隔离页，不能视为页面验收通过。
 - [x] 2026-10-22 角色 ID 回归后的聚焦复测：ZIP 项目、目录安全/往返、A2D replay 集成、Stage 播放集成、角色动画和字幕共 6 个测试文件，62/62 通过。Vitest 使用独立 `vitest.config.ts`，不加载 Vite 服务配置或 `.env`。
+- [x] 2026-10-22 导入角色初始情绪与首句相同的字幕/动作屏障回归：先把项目角色初始情绪设为“高兴”，并让第一句同样为“高兴”；红测证实导入时启动的动画/气泡没有 `lineId`，音频结束后字幕提前切至下一句。`GameRoleAvatar` 现在同时观察当前情绪和播放行，并通过 `scriptRoleKey` 只将本角色的舞台动作关联到说话者对应的行；即使连续两句情绪相同，每句也有自己的等待动作。针对性 6 个文件 62/62、前端全量 19 个文件 158/158 通过，Vite 生产构建通过。`vue-tsc` 仍只报告 6 条既有错误（SettingsOthers.vue、MainChat.vue、volumeNormalizer.ts），没有指向本次改动；完整 `/studio` 实际项目角色素材与真实语音同场验收仍待做。
 
 ## 8. 核对来源
 
