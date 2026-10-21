@@ -3,6 +3,7 @@ from fastapi import APIRouter
 from ling_chat.api.chat_achievement import router as chat_achievement_router
 from ling_chat.api.chat_cache import router as cache_router
 from ling_chat.api.chat_adventure import router as chat_adventure_router
+from ling_chat.api.a2d_project_assets import router as a2d_project_assets_router
 from ling_chat.api.chat_background import router as chat_background_router
 from ling_chat.api.chat_character import router as chat_character_router
 from ling_chat.api.llm_config_api import router as llm_config_router
@@ -65,6 +66,7 @@ class RoutesManager:
         app.include_router(chat_schedule_router)
         app.include_router(chat_scene_router)
         app.include_router(chat_adventure_router)
+        app.include_router(a2d_project_assets_router)
         app.include_router(llm_config_router)  # 注册LLM配置路由
         app.include_router(llm_test_router)  # 注册LLM测试路由
         app.include_router(cache_router)  # 注册缓存管理路由
