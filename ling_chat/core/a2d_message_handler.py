@@ -20,6 +20,10 @@ SendFn = Callable[[dict], Coroutine[Any, Any, None]]
 # ── Handler registry ──────────────────────────────────────
 
 _handlers: dict[str, Callable[..., Coroutine[Any, Any, None]]] = {}
+_A2D_USER_ACTIONS = frozenset({"click", "edit", "continue", "export", "import"})
+_A2D_USER_ACTION_TARGET = re.compile(
+    r"(?:EventTrack|ReviewPanel)(?: line\[\d+\])?"
+)
 
 
 def register(msg_type: str):
@@ -151,9 +155,11 @@ async def _generate_and_synthesize(ai_service, send: SendFn) -> int:
             result["payload"]["batch_index"] = line_count
             result["payload"]["batch_total"] = session.batch_size
 
-            # Log raw LLM response for monitor extraction
-            raw_preview = session.last_raw_llm_response[:2000]
-            logger.info(f"A2D LLM raw response ({len(session.last_raw_llm_response)} chars):\n{raw_preview}")
+            # The service log keeps timing/debug metadata without persisting dialogue.
+            logger.info(
+                f"A2D LLM response received "
+                f"({len(session.last_raw_llm_response)} characters)"
+            )
 
             # Send script_line immediately (streaming)
             await send(result)
@@ -195,7 +201,9 @@ async def _generate_and_synthesize(ai_service, send: SendFn) -> int:
                         f"no valid tts_text after translation"
                     )
             except Exception as tts_e:
-                logger.warning(f"A2D TTS failed (non-fatal): {tts_e}")
+                logger.warning(
+                    f"A2D TTS failed (non-fatal): {type(tts_e).__name__}"
+                )
 
         # Emit format-violation warning if >30% of dialogue lines had action in TTS.
         _emit_format_violation_warning(session)
@@ -205,7 +213,7 @@ async def _generate_and_synthesize(ai_service, send: SendFn) -> int:
         return line_count
 
     except Exception as e:
-        logger.error(f"A2D generate+synthesize failed: {e}")
+        logger.error(f"A2D generate+synthesize failed: {type(e).__name__}")
         # Pop generated lines from session
         for _ in range(line_count):
             if session.script_lines:
@@ -383,7 +391,7 @@ async def _handle_regenerate_tts(ai_service, client_id: str, payload: dict, send
         })
         await send({"type": "status", "payload": {"phase": "paused"}})
     except Exception as e:
-        logger.error(f"A2D TTS regenerate failed: {e}")
+        logger.error(f"A2D TTS regenerate failed: {type(e).__name__}")
         await send({
             "type": "error",
             "payload": {
@@ -399,12 +407,16 @@ async def _handle_regenerate_tts(ai_service, client_id: str, payload: dict, send
 
 @register("a2d.user_action")
 async def _handle_user_action(ai_service, client_id: str, payload: dict, send: SendFn):
-    """Log user interaction (click, edit) from frontend."""
-    action = payload.get("action", "?")
-    target = payload.get("target", "?")
-    detail = payload.get("detail", "")
-    ts = payload.get("timestamp", "")
-    logger.info(f"A2D user action: {action} | target={target} | {detail} | ts={ts}")
+    """Log allowlisted interaction metadata without content-bearing details."""
+    action = payload.get("action")
+    target = payload.get("target")
+    safe_action = action if isinstance(action, str) and action in _A2D_USER_ACTIONS else "other"
+    safe_target = (
+        target
+        if isinstance(target, str) and _A2D_USER_ACTION_TARGET.fullmatch(target)
+        else "other"
+    )
+    logger.info(f"A2D user action: {safe_action} | target={safe_target}")
 
 
 # ── Public API ────────────────────────────────────────────

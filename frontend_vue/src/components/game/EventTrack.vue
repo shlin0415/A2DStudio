@@ -36,7 +36,7 @@ const replay = useA2DReplay()
 const trackRef = ref<HTMLElement | null>(null)
 
 function onLineClick(line: ScriptLine) {
-  logUserAction('click', `EventTrack line[${line.index}]`, `${line.speaker}: ${line.display_text.slice(0, 40)}`)
+  logUserAction('click', `EventTrack line[${line.index}]`)
   // P1 replay: when an imported script is loaded (paused + has lines), clicking
   // a line starts replay from that index (AC-2).
   if (store.phase === 'paused' && store.lines.length > 0 && line.index >= 0 && line.index < store.lines.length) {

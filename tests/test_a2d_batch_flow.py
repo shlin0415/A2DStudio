@@ -212,8 +212,8 @@ class TestRetryLastBatchCount:
 
 class TestUserAction:
     @pytest.mark.asyncio
-    async def test_user_action_logs_all_fields(self):
-        """a2d.user_action reads action, target, detail, timestamp."""
+    async def test_user_action_accepts_optional_detail(self):
+        """a2d.user_action accepts optional content details without failing."""
         ai_svc = MagicMock()
 
         async def noop(msg):

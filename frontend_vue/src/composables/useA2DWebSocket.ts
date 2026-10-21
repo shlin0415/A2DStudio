@@ -398,14 +398,13 @@ export function useA2DWebSocket() {
   }
 
   /** Log user interaction (click, edit) to backend log file via WS. */
-  function logUserAction(action: string, target: string, detail?: string) {
-    emitTrace('user_action', { action, target, detail: detail || '' })
+  function logUserAction(action: string, target: string) {
+    emitTrace('user_action', { action, target })
     send({
       type: 'a2d.user_action',
-      payload: { action, target, detail: detail || '', timestamp: Date.now() },
+      payload: { action, target, timestamp: Date.now() },
     })
-    // Also log to browser console for immediate visibility
-    console.info(`[A2D-User] ${action} | ${target}${detail ? ' | ' + detail : ''}`)
+    console.info(`[A2D-User] ${action} | ${target}`)
   }
 
   function disconnect() {

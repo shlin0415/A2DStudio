@@ -206,7 +206,7 @@ function onTextEdited() {
   const line = activeLine.value
   if (line) {
     store.setEdited(line.id, editingText.value)
-    logUserAction('edit', `ReviewPanel line[${line.index}]`, line.id)
+    logUserAction('edit', `ReviewPanel line[${line.index}]`)
   }
 }
 
@@ -249,8 +249,7 @@ function handleContinue() {
     : []
   // Explicit user action = commit any pending import (preview-mode, DEC-1).
   commitImport()
-  logUserAction('continue', `ReviewPanel line[${line.index}]`,
-    hasEdits ? `edited (${editingText.value.length - originalText.length}Δ)` : 'no edits')
+  logUserAction('continue', `ReviewPanel line[${line.index}]`)
   // Persist current edit before sending
   if (userEdited) {
     store.setEdited(line.id, editingText.value)
@@ -282,7 +281,7 @@ function skipTTS() {
 
 function handleExport() {
   exportSession()
-  logUserAction('export', 'ReviewPanel', `${store.lines.length} lines`)
+  logUserAction('export', 'ReviewPanel')
 }
 
 function triggerImport() {
@@ -307,7 +306,7 @@ async function handleImportChange(event: Event) {
   if (result.ok) {
     importMessage.value = `导入成功（${store.lines.length} 行）`
     importError.value = false
-    logUserAction('import', 'ReviewPanel', `${store.lines.length} lines`)
+    logUserAction('import', 'ReviewPanel')
   } else {
     importMessage.value = result.error || '导入失败'
     importError.value = true

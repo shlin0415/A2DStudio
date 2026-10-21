@@ -821,11 +821,9 @@ class AIService:
             })
 
         logger.debug(
-            f"A2D messages built: {len(messages)} messages, "
+            f"A2D prompt assembled: {len(messages)} messages, "
             f"{len(session.script_lines)} history lines"
         )
-        for i, msg in enumerate(messages):
-            logger.debug(f"  A2D msg[{i}] {msg['role']}: {msg['content']}")
         return messages
 
     async def _a2d_call_llm_with_retry(self, messages: list[dict]) -> str:
@@ -846,8 +844,7 @@ class AIService:
                         full_text += str(chunk)
                 if full_text.strip():
                     logger.debug(
-                        f"A2D LLM response ({len(full_text)} chars): "
-                        f"{full_text[:200]}..."
+                        f"A2D LLM response received ({len(full_text)} characters)"
                     )
                     return full_text
                 raise RuntimeError("LLM returned empty response")
@@ -856,7 +853,8 @@ class AIService:
                 if attempt < len(backoff_delays):
                     delay = backoff_delays[attempt]
                     logger.warning(
-                        f"A2D LLM timeout attempt {attempt+1}/3, retrying in {delay}s"
+                        f"A2D LLM timeout attempt {attempt + 1}/3, "
+                        f"retrying in {delay} seconds"
                     )
                     await asyncio.sleep(delay)
             except Exception as e:
@@ -864,7 +862,8 @@ class AIService:
                 if attempt < len(backoff_delays):
                     delay = backoff_delays[attempt]
                     logger.warning(
-                        f"A2D LLM error attempt {attempt+1}/3: {e}, retrying in {delay}s"
+                        f"A2D LLM error attempt {attempt + 1}/3 "
+                        f"({type(e).__name__}), retrying in {delay} seconds"
                     )
                     await asyncio.sleep(delay)
 

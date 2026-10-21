@@ -57,7 +57,8 @@ window.__a2dTrace = window.__a2dTrace || []
 if (!window.__a2dTraceCaptureSensitive) {
   // Remove sensitive fields left by an older module version before normal use resumes.
   for (let index = 0; index < window.__a2dTrace.length; index += 1) {
-    window.__a2dTrace[index] = sanitizeTraceEntry(window.__a2dTrace[index])
+    const entry = window.__a2dTrace[index]
+    if (entry) window.__a2dTrace[index] = sanitizeTraceEntry(entry)
   }
 }
 

@@ -222,7 +222,9 @@ class WebSocketManager:
         try:
             handled = await dispatch(msg_type, ai_service, client_id, payload, send)
         except Exception as e:
-            logger.exception(f"A2D handler error for '{msg_type}': {e}")
+            logger.error(
+                f"A2D handler error for '{msg_type}' ({type(e).__name__})"
+            )
             await self.send_to_client(client_id, {
                 "type": "error",
                 "payload": {

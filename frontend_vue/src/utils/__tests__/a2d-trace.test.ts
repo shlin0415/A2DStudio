@@ -79,6 +79,18 @@ describe('A2D timing trace privacy', () => {
     expect(window.__a2dTrace[0]?.data).toEqual({ lineId: 'line-old' })
   })
 
+  it('skips empty slots while sanitizing an existing trace buffer', async () => {
+    window.__a2dTraceCaptureSensitive = false
+    window.__a2dTrace = []
+    window.__a2dTrace.length = 1
+
+    vi.resetModules()
+    await import('../a2d-trace')
+
+    expect(window.__a2dTrace).toHaveLength(1)
+    expect(window.__a2dTrace[0]).toBeUndefined()
+  })
+
   it('exports line completion with its identifier and no content or resource paths', () => {
     const safe = sanitizeTraceEntry({
       ts: 5,
