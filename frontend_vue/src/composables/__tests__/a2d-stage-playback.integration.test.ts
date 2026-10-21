@@ -102,6 +102,88 @@ describe('A2D generated playback holds preview through the real avatar actions',
 
   let websocketClient: ReturnType<typeof useA2DWebSocket> | null = null
 
+  it('targets the imported project role after server role IDs are replaced', async () => {
+    vi.useFakeTimers()
+
+    const WebSocketHarness = defineComponent({
+      setup() {
+        websocketClient = useA2DWebSocket()
+        return () => h('div')
+      },
+    })
+    const socketHarness = mount(WebSocketHarness)
+    mountedWrappers.push(socketHarness)
+    sendSocketMessage('a2d.characters', {
+      characters: [{ roleId: 1, script_role_key: 'ema', roleName: 'ema' }],
+    })
+
+    const gameStore = useGameStore()
+    const runtimeRoleId = -1_000_000
+    const projectRole = {
+      ...gameStore.gameRoles[1]!,
+      roleId: runtimeRoleId,
+      roleName: '艾玛',
+    }
+    gameStore.importFromSnapshot({
+      gameRoles: { [runtimeRoleId]: projectRole },
+      presentRoleIds: [runtimeRoleId],
+    })
+    expect(Object.keys(gameStore.gameRoles)).toEqual([String(runtimeRoleId)])
+
+    const avatar = mount(GameRoleAvatar, {
+      props: { role: gameStore.gameRoles[runtimeRoleId]! },
+      global: {
+        stubs: {
+          TouchAreas: true,
+          ImageAcrossFade: {
+            props: ['src'],
+            template: '<div data-testid="avatar-image" />',
+            methods: { waitForLoad: () => Promise.resolve() },
+          },
+        },
+      },
+    })
+    mountedWrappers.push(avatar)
+    const review = mount(ReviewPanel)
+    mountedWrappers.push(review)
+    await flushPromises()
+
+    const scriptStore = useScriptStore()
+    sendSocketMessage('status', { phase: 'thinking' })
+    sendSocketMessage('script_line', scriptLine('project-line', 0, '高兴'))
+    sendSocketMessage('status', { phase: 'synthesizing' })
+    sendSocketMessage('tts_ready', { id: 'project-line', audio_path: '/audio/project-line.wav' })
+    await flushPromises()
+    await vi.advanceTimersByTimeAsync(500)
+    await flushPromises()
+
+    expect(gameStore.gameRoles[runtimeRoleId]!.emotion).toBe('高兴')
+
+    sendSocketMessage('status', { phase: 'thinking' })
+    sendSocketMessage('script_line', scriptLine('next-line', 1, '正常'))
+    sendSocketMessage('status', { phase: 'synthesizing' })
+    sendSocketMessage('tts_ready', { id: 'next-line', audio_path: '/audio/next-line.wav' })
+    await flushPromises()
+    expect(review.get('.preview-text').text()).toBe('字幕 project-line')
+
+    audioEndHandlers[0]?.()
+    await flushPromises()
+    expect(review.get('.preview-text').text()).toBe('字幕 project-line')
+
+    await avatar.get('.happy-bounce').trigger('animationend', { animationName: 'happyBounce' })
+    await flushPromises()
+    expect(review.get('.preview-text').text()).toBe('字幕 project-line')
+
+    await vi.advanceTimersByTimeAsync(2000)
+    const transitionEnd = new Event('transitionend', { bubbles: true })
+    Object.defineProperty(transitionEnd, 'propertyName', { value: 'opacity' })
+    avatar.get('.bubble').element.dispatchEvent(transitionEnd)
+    await flushPromises()
+
+    expect(review.get('.preview-text').text()).toBe('字幕 next-line')
+    expect(scriptStore.playingLineId).toBe('next-line')
+  })
+
   it('keeps the generated line visible until its audio, emotion animation, and bubble finish', async () => {
     vi.useFakeTimers()
 
