@@ -8,6 +8,7 @@ import {
   packA2DProject,
   saveA2DProjectToDirectory,
 } from '@/composables/useA2DProject'
+import { registerImportedProjectAssets } from '@/composables/a2d-project-runtime-assets'
 
 interface MemoryFile {
   bytes: Uint8Array
@@ -177,6 +178,59 @@ describe('A2D project directory', () => {
       expect(store.projectName).toBe('目录项目')
       expect(store.lines[0].audio_path).toBe('blob:directory-import')
     } finally {
+      registerImportedProjectAssets(new Map(), [])
+      if (previousCreateObjectURL)
+        Object.defineProperty(URL, 'createObjectURL', previousCreateObjectURL)
+      else Reflect.deleteProperty(URL, 'createObjectURL')
+    }
+  })
+
+  it('preserves imported audio bytes when migrating a project to another folder', async () => {
+    const store = useScriptStore()
+    store.projectName = '迁移目录项目'
+    store.lines = [line('/audio/a2d_line-1.wav')]
+    const importedAudio = new Uint8Array([82, 73, 70, 70, 1, 2, 3, 4, 87, 65, 86, 69])
+    stubAudioFetch(importedAudio)
+    const sourceDirectory = createMemoryDirectory()
+    await saveA2DProjectToDirectory(sourceDirectory.handle)
+
+    const importedBlobs = new Map<string, Blob>()
+    const previousCreateObjectURL = Object.getOwnPropertyDescriptor(URL, 'createObjectURL')
+    let nextUrl = 0
+    Object.defineProperty(URL, 'createObjectURL', {
+      configurable: true,
+      value: vi.fn((blob: Blob) => {
+        const url = `blob:directory-migration-${++nextUrl}`
+        importedBlobs.set(url, blob)
+        return url
+      }),
+    })
+    const localAudio = new Uint8Array([82, 73, 70, 70, 9, 9, 9, 9, 87, 65, 86, 69])
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async (input: RequestInfo | URL) => {
+        const importedBlob = importedBlobs.get(String(input))
+        if (importedBlob) {
+          return new Response(new Uint8Array(await importedBlob.arrayBuffer()), {
+            headers: { 'Content-Type': importedBlob.type },
+          })
+        }
+        return new Response(localAudio, { headers: { 'Content-Type': 'audio/wav' } })
+      }),
+    )
+
+    try {
+      const opened = await openA2DProjectFromDirectory(sourceDirectory.handle)
+      expect(opened.ok, opened.error).toBe(true)
+
+      const targetDirectory = createMemoryDirectory()
+      await saveA2DProjectToDirectory(targetDirectory.handle)
+
+      expect(Array.from(readMemoryFile(targetDirectory.node, 'assets/audio/line-0001.wav')!)).toEqual(
+        Array.from(importedAudio),
+      )
+    } finally {
+      registerImportedProjectAssets(new Map(), [])
       if (previousCreateObjectURL)
         Object.defineProperty(URL, 'createObjectURL', previousCreateObjectURL)
       else Reflect.deleteProperty(URL, 'createObjectURL')
