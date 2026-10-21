@@ -166,8 +166,8 @@ export const useScriptStore = defineStore('script', () => {
   ): void {
     const line = lines.value.find((candidate) => candidate.id === lineId)
     if (!line) return
+    // Display text may differ from voice text; only actual synthesis inputs invalidate audio.
     const speechChanged = (updates.speaker !== undefined && updates.speaker !== line.speaker)
-      || (updates.display_text !== undefined && updates.display_text !== line.display_text)
       || (updates.tts_text !== undefined && updates.tts_text !== line.tts_text)
     Object.assign(line, updates)
     if (speechChanged) line.audio_path = null

@@ -17,7 +17,7 @@ describe('manual script editing', () => {
     expect(store.activeTab).toBe('script')
   })
 
-  it('invalidates audio when speech text or speaker changes', () => {
+  it('invalidates audio when voice text changes', () => {
     const store = useScriptStore()
     const line = store.createManualLine('ema')
     store.setAudioPath(line.id, '/audio/a2d_line.wav')
@@ -26,6 +26,28 @@ describe('manual script editing', () => {
 
     expect(store.lines[0].audio_path).toBeNull()
     expect(store.lines[0].display_text).toBe('改过的台词')
+  })
+
+  it('invalidates audio when speaker changes', () => {
+    const store = useScriptStore()
+    const line = store.createManualLine('ema')
+    store.setAudioPath(line.id, '/audio/a2d_line.wav')
+
+    store.updateLine(line.id, { speaker: 'hiro' })
+
+    expect(store.lines[0].audio_path).toBeNull()
+  })
+
+  it('keeps audio when only display text changes and voice text is independent', () => {
+    const store = useScriptStore()
+    const line = store.createManualLine('ema')
+    store.updateLine(line.id, { display_text: '早安。', tts_text: 'Good morning.' })
+    store.setAudioPath(line.id, '/audio/a2d_line.wav')
+
+    store.updateLine(line.id, { display_text: '早上好。' })
+
+    expect(store.lines[0].tts_text).toBe('Good morning.')
+    expect(store.lines[0].audio_path).toBe('/audio/a2d_line.wav')
   })
 
   it('removes lines and keeps indexes and selection valid', () => {
