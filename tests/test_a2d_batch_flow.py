@@ -350,3 +350,42 @@ class TestGenerateAndSynthesizeErrorCleanup:
         assert len(sr.script_lines) == 2
         # Paused status sent at end
         assert any(msg.get("type") == "status" and msg.get("payload", {}).get("phase") == "paused" for msg in sent)
+
+
+@pytest.mark.asyncio
+async def test_failed_batch_error_reports_rolled_back_line_ids():
+    from ling_chat.core.a2d_message_handler import _generate_and_synthesize
+
+    service = MagicMock()
+    session = make_sr()
+    service.a2d_session = session
+    previous_line = ScriptLine(speaker="ema", display_text="previous")
+    failed_line = ScriptLine(speaker="hiro", display_text="partial")
+    session.add_line(previous_line)
+    session.batch_size = 1
+
+    async def generate_one(*args, **kwargs):
+        session.add_line(failed_line)
+        return {
+            "type": "script_line",
+            "payload": {
+                "id": failed_line.id,
+                "speaker": failed_line.speaker,
+                "display_text": failed_line.display_text,
+                "tts_text": "partial",
+            },
+        }
+
+    service.a2d_generate_one = generate_one
+    messages = []
+
+    async def send(message):
+        messages.append(message)
+        if message.get("type") == "script_line":
+            raise ConnectionError("WebSocket disconnected")
+
+    await _generate_and_synthesize(service, send)
+
+    error = next(message for message in messages if message["type"] == "error")
+    assert error["payload"]["line_ids"] == [failed_line.id]
+    assert [line.id for line in session.script_lines] == [previous_line.id]

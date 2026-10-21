@@ -183,6 +183,11 @@ async function playNextInQueue(
   try { await audio.play() } catch { /* autoplay blocked, proceed */ }
   const preRollMs = audioFirstPlay ? 500 : 200
   await new Promise(r => setTimeout(r, preRollMs))
+  if (itemGeneration !== audioGeneration) {
+    audio.pause()
+    audio.currentTime = 0
+    return
+  }
   audio.muted = false
   audio.currentTime = 0
   audioFirstPlay = false
@@ -347,7 +352,24 @@ export function useA2DWebSocket() {
           break
         }
         case 'error': {
-          store.setError(msg.payload as ErrorInfo)
+          const errorInfo = msg.payload as ErrorInfo
+          const rolledBackLineIds = new Set(errorInfo.line_ids ?? [])
+          if (rolledBackLineIds.size > 0) {
+            if (store.playingLineId && rolledBackLineIds.has(store.playingLineId)) {
+              stopCurrentAudio()
+              isAudioPlaying.value = false
+              store.isAudioPlaying = false
+              store.playingLineId = null
+            }
+            audioQueue.value = audioQueue.value.filter(
+              (item) => !rolledBackLineIds.has(item.lineId),
+            )
+            pendingLiveQueue.value = pendingLiveQueue.value.filter(
+              (item) => !rolledBackLineIds.has(item.lineId),
+            )
+            rolledBackLineIds.forEach((lineId) => store.removeLine(lineId))
+          }
+          store.setError(errorInfo)
           break
         }
         default:

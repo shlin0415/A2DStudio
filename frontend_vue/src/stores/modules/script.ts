@@ -68,6 +68,7 @@ export interface ErrorInfo {
   retry_count: number
   max_retries: number
   line_id?: string
+  line_ids?: string[]
   auto_play?: boolean
 }
 

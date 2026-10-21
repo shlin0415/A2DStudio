@@ -131,6 +131,7 @@ async def _generate_and_synthesize(ai_service, send: SendFn) -> int:
     """
     session = ai_service.a2d_session
     line_count = 0  # successfully generated lines (for batch_index)
+    line_ids: list[str] = []
 
     try:
         for i in range(session.batch_size):
@@ -152,6 +153,7 @@ async def _generate_and_synthesize(ai_service, send: SendFn) -> int:
                 continue
 
             line_count += 1
+            line_ids.append(result["payload"]["id"])
             result["payload"]["batch_index"] = line_count
             result["payload"]["batch_total"] = session.batch_size
 
@@ -228,6 +230,7 @@ async def _generate_and_synthesize(ai_service, send: SendFn) -> int:
                 "generation_id": "",
                 "retry_count": 0,
                 "max_retries": 3,
+                "line_ids": line_ids,
             },
         })
         return 0

@@ -4,7 +4,7 @@ import { defineComponent, h } from 'vue'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import GameRoleAvatar from '@/components/game/standard/GameRoleAvatar.vue'
 import ReviewPanel from '@/components/game/ReviewPanel.vue'
-import { audioQueue, isAudioPlaying } from '@/composables/audio-queue'
+import { audioQueue, isAudioPlaying, pendingLiveQueue } from '@/composables/audio-queue'
 import { _resetStageActions } from '@/composables/a2d-stage-actions'
 import { useA2DWebSocket } from '@/composables/useA2DWebSocket'
 import { useGameStore } from '@/stores/modules/game'
@@ -17,16 +17,27 @@ let activeSocket: FakeWebSocket | null = null
 const mountedWrappers: Array<{ unmount: () => void }> = []
 
 class FakeAudio {
+  static instances: FakeAudio[] = []
+
   src = ''
   muted = false
   currentTime = 0
   onerror: (() => void) | null = null
+  playCalls = 0
+  pauseCalls = 0
+
+  constructor() {
+    FakeAudio.instances.push(this)
+  }
 
   load(): void {}
   play(): Promise<void> {
+    this.playCalls += 1
     return Promise.resolve()
   }
-  pause(): void {}
+  pause(): void {
+    this.pauseCalls += 1
+  }
 
   set onended(handler: (() => void) | null) {
     audioEndHandlers.push(handler)
@@ -75,7 +86,9 @@ function scriptLine(id: string, index: number, emotion: string): Record<string, 
 describe('A2D generated playback holds preview through the real avatar actions', () => {
   beforeEach(() => {
     setActivePinia(createPinia())
+    FakeAudio.instances = []
     audioQueue.value = []
+    pendingLiveQueue.value = []
     isAudioPlaying.value = false
     audioEndHandlers.length = 0
     activeSocket = null
@@ -93,6 +106,7 @@ describe('A2D generated playback holds preview through the real avatar actions',
     websocketClient = null
     _resetStageActions()
     audioQueue.value = []
+    pendingLiveQueue.value = []
     isAudioPlaying.value = false
     globalThis.Audio = originalAudio
     globalThis.WebSocket = originalWebSocket
@@ -277,5 +291,121 @@ describe('A2D generated playback holds preview through the real avatar actions',
 
     expect(review.get('.preview-text').text()).toBe('字幕 next-line')
     expect(scriptStore.playingLineId).toBe('next-line')
+  })
+
+  it('rolls back failed batch lines and their queued audio on error', async () => {
+    const WebSocketHarness = defineComponent({
+      setup() {
+        websocketClient = useA2DWebSocket()
+        return () => h('div')
+      },
+    })
+    const harness = mount(WebSocketHarness)
+    mountedWrappers.push(harness)
+    await flushPromises()
+
+    const store = useScriptStore()
+    sendSocketMessage('status', { phase: 'thinking' })
+    sendSocketMessage('script_line', scriptLine('kept-line', 0, '正常'))
+    sendSocketMessage('script_line', scriptLine('failed-line', 1, '正常'))
+    store.playingLineId = 'failed-line'
+    store.isAudioPlaying = true
+    audioQueue.value = [
+      { url: '/audio/failed.wav', lineId: 'failed-line' },
+      { url: '/audio/kept.wav', lineId: 'kept-audio' },
+    ]
+    pendingLiveQueue.value = [{ url: '/audio/deferred.wav', lineId: 'failed-line' }]
+    isAudioPlaying.value = true
+
+    sendSocketMessage('error', {
+      error_type: 'unknown',
+      message: 'generation failed',
+      detail: '',
+      generation_id: '',
+      retry_count: 0,
+      max_retries: 3,
+      line_ids: ['failed-line'],
+    })
+
+    expect(store.lines.map((line) => line.id)).toEqual(['kept-line'])
+    expect(audioQueue.value.map((item) => item.lineId)).toEqual(['kept-audio'])
+    expect(pendingLiveQueue.value).toEqual([])
+    expect(isAudioPlaying.value).toBe(false)
+    expect(store.isAudioPlaying).toBe(false)
+    expect(store.playingLineId).toBeNull()
+    expect(store.error?.line_ids).toEqual(['failed-line'])
+  })
+
+  it('keeps earlier valid playback running when a later batch is rolled back', async () => {
+    const WebSocketHarness = defineComponent({
+      setup() {
+        websocketClient = useA2DWebSocket()
+        return () => h('div')
+      },
+    })
+    const harness = mount(WebSocketHarness)
+    mountedWrappers.push(harness)
+    await flushPromises()
+
+    const store = useScriptStore()
+    sendSocketMessage('status', { phase: 'thinking' })
+    sendSocketMessage('script_line', scriptLine('kept-line', 0, '正常'))
+    sendSocketMessage('script_line', scriptLine('failed-line', 1, '正常'))
+    store.playingLineId = 'kept-line'
+    store.isAudioPlaying = true
+    isAudioPlaying.value = true
+
+    sendSocketMessage('error', {
+      error_type: 'unknown',
+      message: 'generation failed',
+      detail: '',
+      generation_id: '',
+      retry_count: 0,
+      max_retries: 3,
+      line_ids: ['failed-line'],
+    })
+
+    expect(store.lines.map((line) => line.id)).toEqual(['kept-line'])
+    expect(isAudioPlaying.value).toBe(true)
+    expect(store.isAudioPlaying).toBe(true)
+    expect(store.playingLineId).toBe('kept-line')
+  })
+
+  it('does not start a rolled-back line after its audio pre-roll is cancelled', async () => {
+    vi.useFakeTimers()
+    const WebSocketHarness = defineComponent({
+      setup() {
+        websocketClient = useA2DWebSocket()
+        return () => h('div')
+      },
+    })
+    const harness = mount(WebSocketHarness)
+    mountedWrappers.push(harness)
+    await flushPromises()
+
+    sendSocketMessage('status', { phase: 'thinking' })
+    sendSocketMessage('script_line', scriptLine('failed-line', 0, '正常'))
+    sendSocketMessage('tts_ready', {
+      id: 'failed-line',
+      audio_path: '/audio/failed.wav',
+      tts_text: '语音 failed-line',
+    })
+    await flushPromises()
+
+    const audio = FakeAudio.instances.find((instance) => instance.src.endsWith('/audio/failed.wav'))
+    expect(audio).toBeDefined()
+    sendSocketMessage('error', {
+      error_type: 'unknown',
+      message: 'generation failed',
+      detail: '',
+      generation_id: '',
+      retry_count: 0,
+      max_retries: 3,
+      line_ids: ['failed-line'],
+    })
+    await vi.advanceTimersByTimeAsync(600)
+
+    expect(audio?.playCalls).toBe(1)
+    expect(audio?.pauseCalls).toBe(1)
   })
 })
