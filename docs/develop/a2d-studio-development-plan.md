@@ -1,7 +1,7 @@
 # A2D Studio 后续开发计划
 
 > 调研基准：2026-10-12\
-> 最近更新：2026-10-22（字幕与舞台动作同步诊断；ZIP v2；目录读写；音频失效边界；LLM 档热切换）\
+> 最近更新：2026-10-22（字幕与舞台动作同步诊断；ZIP v2；目录读写；音频失效边界；LLM 档热切换；空 choices 流式帧）\
 > 目的：收敛产品目标、整理项目现状，并给出可验证的下一步。
 > 状态：路线建议；不是 Rust 重写或大规模删档的执行授权。
 
@@ -312,6 +312,7 @@ A2D 剧本项目与素材（单一项目格式）
 - [x] 2026-10-22 当前分支复核：`git diff --check 9cb597ec..HEAD` 干净；前端全量 19 个文件、152 项通过，`pnpm build-only` 通过。新增生成模式集成测试走 `a2d.characters → script_line → tts_ready`，使用真实 `GameRoleAvatar` 和 `ReviewPanel`；下一句已排队时仍显示前句，语音结束后还需等表情动画与气泡转场才切句。新增 ZIP 重开再导出测试先复现负运行时角色 ID 导致素材路径拒绝；现在只允许打包当前导入项目登记的 Blob 资源，并验证所有引用资源按字节保留（即使本机参考音频不同）；任意外部 Blob 仍被拒绝。新增目录迁移测试从源目录打开后保存到另一个目录，在本机同名语音内容被特意设为不同字节的条件下仍验证目标文件保留项目内音频；这验证了自动化文件系统契约，不代表真实跨机器验收。额外在临时 Vite 预览 `http://127.0.0.1:5174/studio` 确认 A2D 页面正常渲染及保存按钮调用 `showDirectoryPicker`；系统选择窗口不暴露给浏览器自动化，因此取消选择、未创建/写入项目文件；Vite 已停止，5174 已释放，后端未启动（前端代理请求拒绝符合预期）。`pnpm type-check` 仍只报 6 个既有错误（`SettingsOthers.vue` 两处、`MainChat.vue` 两处、`volumeNormalizer.ts` 两处）。此前核对的本机 5173/8765/31801/31802 无监听；当前工作树没有 `.venv` 与预期的相邻 `third_party/GPT-SoVITS`，项目启动器不能从该隔离目录通过预检；未复制依赖或借用另一 checkout 的 `.env`。真实 CSS 事件已由隔离浏览器合成状态验证，但不是后端驱动的全链播放；真实目录选择/读写仍待验收。
 - [x] 2026-10-22 浏览器字幕/动作屏障：临时 Vite `/studio` 无后端页面中注入两句合成剧本，Playwright 通过内存路由提供 1.4 秒 WAV 和头像/气泡图；Chromium 实际播放并触发 `audio_end`。第一句在 2773.0 ms 音频结束后仍等待气泡转场，3011.6 ms 气泡 `opacity` 转场完成，3012.2 ms 才发 `line_complete`，随后 3013.7 ms 显示第二句字幕、3014.2 ms 启动第二段音频；实际 `happyBounce` `animationend` 与无页面异常也已观察到。该回放证明前端真实媒体事件与 CSS 动作屏障按顺序联动，但用的是合成音频/素材且未启动后端、GSV 或 LLM。
 - [x] 2026-10-22 修复命名 LLM 档切换：DeepSeek/MiMo 档只使用各自环境别名，默认档保留通用 `CHAT_*` 优先级；成功切换后重建运行中的模型客户端并更新 A2D、消息生成器和工具执行器引用。`tests/test_a2d_llm_config.py` 全部 11 项通过，测试使用隔离 `package_root` 与虚构值；另外在假 provider 下用原 checkout 的 `.env` 在内存中确认两个别名均进入 `LLMManager`，无网络请求。
+- [x] 2026-10-22 OpenAI-compatible 工具流：新增测试先复现 metadata-only chunk 的 `choices[0]` 越界；`generate_stream_with_tools` 现在跳过无 choices 帧。流式和 LLM 配置相关回归合计 13 项通过；未发真实 API 请求。
 - [ ] 真实 DeepSeek/MiMo 档切换和流式响应尚未从启动中的完整应用验证；两个 checkout 目前都没有命名 DS/MiMo 档，本轮未发出在线请求。
 - [ ] 远端发布待重试：本分支 A2D 改动仍未推送；按配置代理常规 `git push remote-shlin-fork codex/a2d-playback-sync-20261021` 失败，原因是 `127.0.0.1:7897` 无法连接。未改代理、未绕过代理。当前 15 个未提交文件仅为既有角色/剧本 YAML，保持未暂存、未改动。
 

@@ -230,6 +230,9 @@ class WebLLMProvider(BaseLLMProvider):
             tool_calls_data = {}
 
             async for chunk in stream:
+                if not chunk.choices:
+                    continue
+
                 delta = chunk.choices[0].delta
 
                 # 处理文本内容
