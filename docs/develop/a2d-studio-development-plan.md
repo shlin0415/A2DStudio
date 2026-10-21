@@ -314,6 +314,7 @@ A2D 剧本项目与素材（单一项目格式）
 - [x] 2026-10-22 修复命名 LLM 档切换：DeepSeek/MiMo 档只使用各自环境别名，默认档保留通用 `CHAT_*` 优先级；成功切换后重建运行中的模型客户端并更新 A2D、消息生成器和工具执行器引用。`tests/test_a2d_llm_config.py` 全部 11 项通过，测试使用隔离 `package_root` 与虚构值；另外在假 provider 下用原 checkout 的 `.env` 在内存中确认两个别名均进入 `LLMManager`，无网络请求。
 - [x] 2026-10-22 OpenAI-compatible 工具流与命名档 API：新增测试先复现 metadata-only chunk 的 `choices[0]` 越界；`generate_stream_with_tools` 现在跳过无 choices 帧。另验证 DeepSeek/MiMo seed 档可由配置列表接口枚举，详情接口返回空 `api_key`，虚构凭据不会进入响应。TTS 目录、音频保存、两种流式响应和 LLM 档切换相关回归合计 23 项通过；未发真实 API 请求。
 - [x] 2026-10-22 DeepSeek/MiMo 可切换入口：若对应三项 `.env` 别名齐全且型号家族匹配，启动时只补建缺失的 `deepseek.toml`/`mimo.toml`；保留现有档、默认档和全局参数，配置文件中的 `api_key` 为空，实际密钥仍由环境别名注入。用 `main.py` 的真实 `load_env()` 顺序读取隔离目录中的虚构 `.env` 后再导入配置单例，验证得到 default/deepseek/mimo 三档且命名档未持久化 key；另用虚构值切换到两个档读取各自环境参数。设置页列表使用档案 ID `deepseek` / `mimo`；现有 TOML 序列化器只把 `config_name` 写为注释，因此 API 显示名回退为小写 ID，当前不影响选择和切换。
+- [x] 2026-10-22 后端安全单测子集：19 个不要求外部服务的 `test_*.py` 模块共 223 项通过、1 项跳过；跳过原因为可选 `jiwer` 未安装。排除了 GSV 在线集成、音频库、音频编排、ASR 质量和 Stage/WS 完整服务测试；使用隔离配置根、禁用 `.env` 装载和独立 `tmp/pytest-safeunit-20261022`，未连接供应商或 GSV。
 - [ ] 真实 DeepSeek/MiMo 在线流式响应仍待验证；当前未发 API 请求，配置代理 `127.0.0.1:7897` 无监听。隔离启动测试不等同于供应商服务可用或完整应用网络验收。
 - [ ] 远端发布待重试：2026-10-22 再次按原配置执行普通 `git push --porcelain remote-shlin-fork codex/a2d-playback-sync-20261021`，连接 `127.0.0.1:7897` 失败，远端未收到更新；未改代理、未绕过代理、未强推。当前分支本地比跟踪引用 ahead 23；15 个未提交文件仅为既有角色/剧本 YAML，保持未暂存、未改动。
 
