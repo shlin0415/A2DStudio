@@ -16,6 +16,7 @@ import {
 } from './a2d-project-format'
 import { writeProjectArchive } from './a2d-project-archive'
 import { EMOTION_CONFIG_EMO } from '@/controllers/emotion/config'
+import { getImportedProjectAvatar, isImportedProjectAssetUrl } from './a2d-project-runtime-assets'
 
 const MAX_MEDIA_BYTES = A2D_PROJECT_MAX_ENTRY_BYTES
 const MAX_EXPANDED_BYTES = A2D_PROJECT_MAX_EXPANDED_BYTES
@@ -40,7 +41,13 @@ interface ExportContext {
 
 function validateKnownRoute(source: string, kind: A2DProjectAssetKind): string {
   const fieldLabel = `${kind} 素材`
-  if (source.startsWith('blob:') || source.startsWith('data:')) {
+  if (source.startsWith('blob:')) {
+    if (kind !== 'line_audio' && !isImportedProjectAssetUrl(source)) {
+      throw new Error(`${fieldLabel}: 只允许使用已导入项目中的临时资源`)
+    }
+    return source
+  }
+  if (source.startsWith('data:')) {
     if (kind !== 'line_audio') throw new Error(`${fieldLabel}: 只允许语音使用临时 URL`)
     return source
   }
@@ -352,14 +359,17 @@ async function collectRoleAssets(context: ExportContext): Promise<void> {
   for (const [roleKey, role] of context.rolesByKey) {
     const runtimeRoleId = [...context.roleKeysById.entries()].find(([, key]) => key === roleKey)?.[0]
     if (runtimeRoleId === undefined) continue
-    const hasReference = context.envelope.script.lines.some((line) => {
+    const referenceLine = context.envelope.script.lines.find((line) => {
       const overlayRoleKey = line.overlay
         ? context.roleKeysById.get(line.overlay.character_id) || line.speaker
         : line.speaker
       return overlayRoleKey === roleKey && Boolean(line.overlay?.ref_audio_path)
     })
-    if (hasReference) {
-      const url = `/api/a2d/project-assets/reference-audio/${encodeURIComponent(roleKey)}`
+    if (referenceLine) {
+      const importedReferenceAudio = referenceLine.overlay?.ref_audio_path
+      const url = importedReferenceAudio?.startsWith('blob:')
+        ? importedReferenceAudio
+        : `/api/a2d/project-assets/reference-audio/${encodeURIComponent(roleKey)}`
       role.reference_audio_path = await addAsset(context, 'reference_audio', url, `roles.${roleKey}.reference_audio_path`)
     }
     const emotions = new Set<string>()
@@ -373,7 +383,10 @@ async function collectRoleAssets(context: ExportContext): Promise<void> {
     }
     const clothesName = role.clothes_name || 'default'
     for (const emotion of emotions) {
-      const url = `/api/v1/chat/character/get_avatar/${runtimeRoleId}/${encodeURIComponent(emotion)}/${encodeURIComponent(clothesName)}`
+      const importedAvatar = getImportedProjectAvatar(roleKey, clothesName, emotion)
+      const url =
+        importedAvatar ||
+        `/api/v1/chat/character/get_avatar/${runtimeRoleId}/${encodeURIComponent(emotion)}/${encodeURIComponent(clothesName)}`
       role.avatar_assets[emotion] = await addAsset(context, 'avatar', url, `roles.${roleKey}.avatar_assets.${emotion}`)
     }
   }

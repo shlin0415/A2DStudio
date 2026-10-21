@@ -11,6 +11,10 @@ export function getImportedProjectAvatar(scriptRoleKey: string, clothesName: str
   return importedAvatarUrls.get(getProjectAvatarRegistryKey(scriptRoleKey, clothesName, emotion)) || null
 }
 
+export function isImportedProjectAssetUrl(url: string): boolean {
+  return activeProjectUrls.includes(url)
+}
+
 /** Replace package-owned URLs only after an import has successfully updated both stores. */
 export function registerImportedProjectAssets(avatarUrls: Map<string, string>, objectUrls: string[]): void {
   const previousUrls = activeProjectUrls

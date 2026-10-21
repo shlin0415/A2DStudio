@@ -7,7 +7,10 @@ import { useGameStore } from '@/stores/modules/game'
 import { buildExportEnvelope, type ExportEnvelope } from '@/composables/useA2DSaveLoad'
 import type { GameRole } from '@/stores/modules/game/state'
 import { exportA2DProject, packA2DProject, unpackA2DProject } from '@/composables/useA2DProject'
-import { getImportedProjectAvatar } from '@/composables/a2d-project-runtime-assets'
+import {
+  getImportedProjectAvatar,
+  registerImportedProjectAssets,
+} from '@/composables/a2d-project-runtime-assets'
 import {
   A2D_PROJECT_MAX_ARCHIVE_BYTES,
   A2D_PROJECT_MAX_ENTRY_BYTES,
@@ -342,9 +345,82 @@ describe('A2D project v2 export contract', () => {
 
     await expect(packA2DProject(makeExportEnvelope(), '双人短剧')).rejects.toThrow('hiro')
   })
+
+  it('rejects unregistered Blob URLs for project media', async () => {
+    registerImportedProjectAssets(new Map(), [])
+    const envelope = makeExportEnvelope()
+    envelope.script.lines[0]!.overlay!.background = 'blob:untrusted-background'
+    stubProjectAssetFetch()
+
+    await expect(packA2DProject(envelope, '双人短剧')).rejects.toThrow(
+      '只允许使用已导入项目中的临时资源',
+    )
+  })
 })
 
 describe('A2D project v2 import contract', () => {
+  it('re-exports a reopened project with the same referenced asset bytes', async () => {
+    const localAssetFetch = stubProjectAssetFetch()
+    const firstArchive = await packA2DProject(makeExportEnvelope(), '双人短剧')
+    const firstEntries = unzipSync(firstArchive)
+    const firstManifest = JSON.parse(strFromU8(firstEntries['project.json']))
+    const importedBlobs = new Map<string, Blob>()
+    const originalCreateObjectURL = Object.getOwnPropertyDescriptor(URL, 'createObjectURL')
+    const originalRevokeObjectURL = Object.getOwnPropertyDescriptor(URL, 'revokeObjectURL')
+    let nextUrl = 0
+    Object.defineProperty(URL, 'createObjectURL', {
+      configurable: true,
+      value: vi.fn((blob: Blob) => {
+        const url = `blob:roundtrip-${++nextUrl}`
+        importedBlobs.set(url, blob)
+        return url
+      }),
+    })
+    Object.defineProperty(URL, 'revokeObjectURL', { configurable: true, value: vi.fn() })
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async (input: RequestInfo | URL) => {
+        const importedBlob = importedBlobs.get(String(input))
+        if (importedBlob) {
+          return new Response(new Uint8Array(await importedBlob.arrayBuffer()), {
+            headers: { 'Content-Type': importedBlob.type },
+          })
+        }
+        if (String(input).includes('/reference-audio/')) {
+          return new Response(new Uint8Array([82, 73, 70, 70, 9, 9, 9, 9, 87, 65, 86, 69]), {
+            headers: { 'Content-Type': 'audio/wav' },
+          })
+        }
+        return localAssetFetch(input)
+      }),
+    )
+
+    try {
+      const imported = await unpackA2DProject(new File([firstArchive], 'short.a2d.zip'))
+      expect(imported.ok).toBe(true)
+
+      const secondArchive = await packA2DProject(buildExportEnvelope(), '双人短剧')
+      const secondEntries = unzipSync(secondArchive)
+      const secondManifest = JSON.parse(strFromU8(secondEntries['project.json']))
+      expect(secondManifest.resources).toHaveLength(firstManifest.resources.length)
+      for (let index = 0; index < firstManifest.resources.length; index += 1) {
+        const firstResource = firstManifest.resources[index]
+        const secondResource = secondManifest.resources[index]
+        expect(secondResource.kind).toBe(firstResource.kind)
+        expect(secondResource.media_type).toBe(firstResource.media_type)
+        expect(Array.from(secondEntries[secondResource.path])).toEqual(
+          Array.from(firstEntries[firstResource.path]),
+        )
+      }
+    } finally {
+      registerImportedProjectAssets(new Map(), [])
+      if (originalCreateObjectURL) Object.defineProperty(URL, 'createObjectURL', originalCreateObjectURL)
+      else Reflect.deleteProperty(URL, 'createObjectURL')
+      if (originalRevokeObjectURL) Object.defineProperty(URL, 'revokeObjectURL', originalRevokeObjectURL)
+      else Reflect.deleteProperty(URL, 'revokeObjectURL')
+    }
+  })
+
   it('restores bundled media as Blob URLs and builds local roles from stable keys', async () => {
     stubProjectAssetFetch()
     const archive = await packA2DProject(makeExportEnvelope(), '双人短剧')
